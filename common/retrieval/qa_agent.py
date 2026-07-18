@@ -238,7 +238,7 @@ class QARetrievalRunner:
                 r"证据足够时提交 \boxed{...}。"
             )
         else:
-            guidance = r"\n\n检索次数已用完，下一轮必须提交 \boxed{...}。"
+            guidance = "\n\n" + r"检索次数已用完，下一轮必须提交 \boxed{...}。"
         if duplicate_query and self.duplicate_query_penalty:
             guidance += "\n[检索反馈] 本次关键词与之前重复，请避免无信息增量的检索。"
         return AgentTurn(

@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sys
 import time
 from collections import Counter, defaultdict
@@ -31,6 +30,7 @@ from common.retrieval.markdown_bm25 import (  # noqa: E402
     format_search_results,
     question_context,
 )
+from common.retrieval.qa_sft import visible_retrieval_text  # noqa: E402
 
 DEFAULT_CLEAN_TRAIN_PATH = (
     "/shared/outputs/wanghaonan/qa_training_clean_wanghaonan/"
@@ -38,7 +38,6 @@ DEFAULT_CLEAN_TRAIN_PATH = (
     "cleaned_data/clean_train.jsonl"
 )
 OPEN_TYPES = {"fill", "short"}
-_RESULT_HEADER = re.compile(r"^\d+\.\s+来源：")
 
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -99,17 +98,6 @@ def _selection_status(displayed_coverage: float, pool_coverage: float) -> str:
     if max(displayed_coverage, pool_coverage) > 0.0:
         return "partial_review"
     return "excluded_unsupported"
-
-
-def _visible_retrieval_text(rendered: str) -> str:
-    """Drop ranking metadata so numeric answers cannot match ranks or scores."""
-    return "\n".join(
-        line
-        for line in rendered.splitlines()
-        if line != "[检索结果]"
-        and not _RESULT_HEADER.match(line)
-        and not line.startswith("相关度：")
-    )
 
 
 def _dataset_role(status: str) -> str:
@@ -211,7 +199,7 @@ def _candidate_record(
         per_result_chars=per_result_chars,
     )
     displayed_hits = text_keypoint_hits(
-        _visible_retrieval_text(first_retrieval_output),
+        visible_retrieval_text(first_retrieval_output),
         keypoints,
     )
     pool_hits = evidence_keypoint_hits(results, keypoints, top_k=pool_top_k)

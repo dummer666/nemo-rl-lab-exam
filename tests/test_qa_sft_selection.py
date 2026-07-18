@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from common.retrieval.evidence import text_keypoint_hits
 from common.retrieval.markdown_bm25 import SearchResult
+from common.retrieval.qa_sft import visible_retrieval_text
 from experiments.qa_sft_data_select_wanghaonan.run import (
     _assign_primary_splits,
     _candidate_record,
     _greedy_support_results,
     _selection_status,
-    _visible_retrieval_text,
 )
 
 
@@ -56,7 +56,7 @@ def test_selection_status_separates_direct_and_rewrite_candidates():
 def test_visible_retrieval_text_excludes_ranks_and_scores():
     rendered = "[检索结果]\n1. 来源：doc.md\n相关度：12.50\n没有数字答案"
 
-    visible = _visible_retrieval_text(rendered)
+    visible = visible_retrieval_text(rendered)
 
     assert "1. 来源" not in visible
     assert "12.50" not in visible
