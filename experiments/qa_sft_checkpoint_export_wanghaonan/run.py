@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -72,7 +71,11 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
             python_path_parts.append(converter_env["PYTHONPATH"])
         converter_env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
         command = [
-            sys.executable,
+            "uv",
+            "run",
+            "--extra",
+            "mcore",
+            "python",
             "-u",
             "examples/converters/convert_lora_to_hf.py",
             "--base-ckpt",
