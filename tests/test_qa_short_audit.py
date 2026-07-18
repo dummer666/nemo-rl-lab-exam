@@ -9,6 +9,7 @@ from common.retrieval.qa_short_audit import (
     parse_short_gold,
 )
 from experiments.qa_short_gold_audit_wanghaonan.run import (
+    _gold_record,
     _logged_messages,
     _logged_scalar,
 )
@@ -164,6 +165,29 @@ def test_missing_retrieval_is_separate_from_static_label_defect():
         "no_answer_bearing_evidence_mapping"
     ]
     assert audit["support_level"] == "none"
+
+
+def test_public_gold_record_preserves_mapping_failure_fields():
+    record = _gold_record(
+        {
+            "query": "请列出两个独立控制要求。",
+            "expected_answer": "[short] alpha control ||| beta isolation",
+            "meta": {"bank": "controls"},
+        },
+        dataset_split="train",
+        source_row_id=9,
+        index=_StubIndex(
+            {"两个独立控制": [_result("没有包含目标事实的无关资料")]}
+        ),
+        selection=None,
+        verified_trajectory=None,
+    )
+
+    assert not record["label_defect"]
+    assert record["evidence_mapping_failure"]
+    assert record["evidence_issue_codes"] == [
+        "no_answer_bearing_evidence_mapping"
+    ]
 
 
 def test_full_evidence_with_incomplete_answer_is_synthesis_failure():
