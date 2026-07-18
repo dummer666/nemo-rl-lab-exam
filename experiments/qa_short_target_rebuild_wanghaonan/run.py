@@ -47,6 +47,7 @@ from common.retrieval.qa_target_rebuild import (  # noqa: E402
     extract_json_object,
     non_text_task_reason,
     question_fingerprint,
+    question_query_candidates,
     rebuilt_expected_answer,
     trusted_visible_quote_hits,
     validate_generated_target,
@@ -199,7 +200,7 @@ def _generate(
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=5000,
+            max_length=7000,
             add_special_tokens=False,
         )
         encoded = {key: value.to(model.device) for key, value in encoded.items()}
@@ -459,7 +460,7 @@ def _evidence_records(
     results: Sequence[SearchResult],
     retrieval_query: str,
     *,
-    limit: int = 8,
+    limit: int = 14,
 ) -> list[dict[str, Any]]:
     records = []
     seen = set()
@@ -470,7 +471,7 @@ def _evidence_records(
         if key in seen:
             continue
         seen.add(key)
-        snippet = best_snippet(result.text, retrieval_query, 640)
+        snippet = best_snippet(result.text, retrieval_query, 360)
         if len(snippet.strip()) < 24:
             continue
         records.append(
@@ -726,7 +727,7 @@ def main() -> None:
             model_query=first_search_query,
             original_query=str(row["query"]),
             bank=str(row["bank"]),
-            top_k=12,
+            top_k=24,
         )
         evidence = _evidence_records(results, retrieval_query)
         if not evidence:
@@ -761,7 +762,7 @@ def main() -> None:
         label="target-generation",
         batch_size=4,
         max_new_tokens=512,
-        num_return_sequences=2,
+        num_return_sequences=4,
         do_sample=True,
         temperature=0.4,
         top_p=0.9,
@@ -887,25 +888,66 @@ def main() -> None:
     routed_targets = []
     route_audit: list[dict[str, Any]] = []
     for row in verified_targets:
-        first_query = question_context(str(row["query"]))[:256]
-        retrieval_query, results = _search(
-            index,
-            model_query=first_query,
-            original_query=str(row["query"]),
-            bank=str(row["bank"]),
-            top_k=4,
+        first_candidates = []
+        for candidate_index, first_query in enumerate(
+            question_query_candidates(str(row["query"]))
+        ):
+            retrieval_query, results = _search(
+                index,
+                model_query=first_query,
+                original_query=str(row["query"]),
+                bank=str(row["bank"]),
+                top_k=4,
+            )
+            observation, visible_snippets = (
+                format_search_results_with_visible_snippets(
+                    results,
+                    retrieval_query,
+                    max_chars=1800,
+                    per_result_chars=360,
+                )
+            )
+            first_hits = trusted_visible_quote_hits(
+                results,
+                visible_snippets,
+                row["answer_points"],
+            )
+            first_candidates.append(
+                {
+                    "candidate_index": candidate_index,
+                    "query": first_query,
+                    "retrieval_query": retrieval_query,
+                    "results": results,
+                    "observation": observation,
+                    "visible_snippets": visible_snippets,
+                    "hits": first_hits,
+                }
+            )
+        if not first_candidates:
+            raise RuntimeError(
+                f"empty first-query candidate set for {row['source_row_id']}"
+            )
+        selected_first = min(
+            first_candidates,
+            key=lambda candidate: (
+                -len(candidate["hits"]),
+                candidate["candidate_index"],
+            ),
         )
-        observation, visible_snippets = format_search_results_with_visible_snippets(
-            results,
-            retrieval_query,
-            max_chars=1800,
-            per_result_chars=360,
-        )
-        first_hits = trusted_visible_quote_hits(
-            results,
-            visible_snippets,
-            row["answer_points"],
-        )
+        first_query = selected_first["query"]
+        retrieval_query = selected_first["retrieval_query"]
+        results = selected_first["results"]
+        observation = selected_first["observation"]
+        visible_snippets = selected_first["visible_snippets"]
+        first_hits = selected_first["hits"]
+        first_query_audit = [
+            {
+                "query": candidate["query"],
+                "retrieval_query": candidate["retrieval_query"],
+                "answer_point_hit_indexes": sorted(candidate["hits"]),
+            }
+            for candidate in first_candidates
+        ]
         first_hop = {
             "hop": 1,
             "model_search_query": first_query,
@@ -920,6 +962,7 @@ def main() -> None:
             "first_search_query": first_query,
             "first_observation": observation,
             "first_hits": sorted(first_hits),
+            "first_query_candidates": first_query_audit,
             "search_hops": [first_hop],
         }
         if len(first_hits) == len(row["answer_points"]):
@@ -936,6 +979,7 @@ def main() -> None:
                     "accepted": True,
                     "search_turns": 1,
                     "first_hits": sorted(first_hits),
+                    "first_query_candidates": first_query_audit,
                     "candidates": [],
                 }
             )
@@ -1054,6 +1098,7 @@ def main() -> None:
                 "accepted": selected is not None,
                 "search_turns": 2 if selected else None,
                 "first_hits": row["first_hits"],
+                "first_query_candidates": row["first_query_candidates"],
                 "selected_query": selected["query"] if selected else None,
                 "candidates": candidate_audit,
             }
@@ -1214,6 +1259,23 @@ def main() -> None:
         f"{row.get('stage')}:{row.get('reason')}"
         for row in rejected
     )
+    generation_decision_counts = Counter(
+        str(row["deterministic_decision"])
+        for row in generation_audit
+    )
+    teacher_answerable_source_count = len(
+        {
+            int(row["source_row_id"])
+            for row in generation_audit
+            if row["deterministic_decision"]
+            not in {"teacher_rejected", "invalid_json"}
+        }
+    )
+    quote_alignment_counts = Counter(
+        str(point["quote_alignment"])
+        for attempt in valid_attempts
+        for point in attempt["points"]
+    )
     token_lengths = [
         int(row["_audit"]["token_length"])
         for row in assigned
@@ -1241,7 +1303,14 @@ def main() -> None:
         },
         "source": source_stats,
         "evidence_pool_ready": len(prepared),
+        "generation_decision_counts": dict(
+            sorted(generation_decision_counts.items())
+        ),
+        "teacher_answerable_unique_source_count": (
+            teacher_answerable_source_count
+        ),
         "deterministically_valid_attempts": len(valid_attempts),
+        "quote_alignment_counts": dict(sorted(quote_alignment_counts.items())),
         "independently_verified_unique_targets": len(verified_targets),
         "machine_verified_route_targets": len(assigned),
         "point_count_distribution": dict(sorted(point_counts.items())),

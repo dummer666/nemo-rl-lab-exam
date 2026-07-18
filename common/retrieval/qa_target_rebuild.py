@@ -12,6 +12,7 @@ from common.retrieval.evidence import normalize_evidence_text
 from common.retrieval.markdown_bm25 import SearchResult, question_context, tokenize
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+_TRUNCATION_MARKER = re.compile(r"(?:\.{2,}|。{2,}|…|⋯)")
 _ENTITY = re.compile(
     r"[A-Za-z][A-Za-z0-9+._/-]*|\d+(?:\.\d+)?(?:%|℃|°C|V|A|Pa|nm|um|μm)?",
     re.IGNORECASE,
@@ -125,6 +126,69 @@ def _entity_set(text: str) -> set[str]:
     return {match.group(0).lower() for match in _ENTITY.finditer(str(text))}
 
 
+def align_literal_quote(evidence_text: str, generated_quote: str) -> str | None:
+    """Return one exact source span when punctuation-only drift is unambiguous."""
+    source = str(evidence_text)
+    quote = str(generated_quote).strip()
+    if not quote or _TRUNCATION_MARKER.search(quote):
+        return None
+    if quote in source:
+        return quote
+
+    normalized_quote = normalize_evidence_text(quote)
+    if not normalized_quote:
+        return None
+    normalized_chars = []
+    source_indexes = []
+    for source_index, character in enumerate(source):
+        for normalized_character in normalize_evidence_text(character):
+            normalized_chars.append(normalized_character)
+            source_indexes.append(source_index)
+    normalized_source = "".join(normalized_chars)
+    start = normalized_source.find(normalized_quote)
+    if start < 0 or normalized_source.find(normalized_quote, start + 1) >= 0:
+        return None
+    end = start + len(normalized_quote) - 1
+    return source[source_indexes[start] : source_indexes[end] + 1]
+
+
+def question_query_candidates(question: str, max_candidates: int = 8) -> list[str]:
+    """Build leak-free BM25 query variants using only literal question clauses."""
+    context = question_context(question)[:256].strip()
+    if not context:
+        return []
+    candidates = [context]
+    seen = {" ".join(context.lower().split())}
+    clauses = re.split(r"[\n\r，,。；;：:、！？!?（）()]+", context)
+    for clause in clauses:
+        candidate = re.sub(
+            r"^(?:请|简述|说明|分析|列举|比较|指出|回答)\s*",
+            "",
+            clause.strip(),
+        ).strip()
+        normalized = " ".join(candidate.lower().split())
+        if len(normalize_evidence_text(candidate)) < 4 or normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append(candidate[:256])
+        if len(candidates) >= max_candidates:
+            break
+    return candidates
+
+
+def _canonical_evidence_id(
+    evidence_id: str,
+    evidence_by_id: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    if evidence_id in evidence_by_id:
+        return evidence_id
+    match = re.fullmatch(r"[Ee]0*(\d+)", evidence_id)
+    if not match:
+        return None
+    canonical = f"E{int(match.group(1)):02d}"
+    return canonical if canonical in evidence_by_id else None
+
+
 def _point_validation_reason(
     statement: str,
     quote: str,
@@ -185,13 +249,25 @@ def validate_generated_target(
         if not isinstance(raw_point, Mapping):
             return None, f"point_{index}:invalid_shape"
         statement = str(raw_point.get("statement", "")).strip()
-        evidence_id = str(raw_point.get("evidence_id", "")).strip()
-        quote = str(raw_point.get("quote", "")).strip()
-        evidence = evidence_by_id.get(evidence_id)
-        if evidence is None:
+        generated_evidence_id = str(raw_point.get("evidence_id", "")).strip()
+        evidence_id = _canonical_evidence_id(
+            generated_evidence_id,
+            evidence_by_id,
+        )
+        generated_quote = str(raw_point.get("quote", "")).strip()
+        if evidence_id is None:
             return None, f"point_{index}:unknown_evidence"
+        evidence = evidence_by_id.get(evidence_id)
+        if evidence is None:  # pragma: no cover - canonical lookup guarantees this
+            raise AssertionError("canonical evidence ID is missing")
         if evidence.get("quality_category") in {"question-only", "noise"}:
             return None, f"point_{index}:untrusted_evidence"
+        quote = align_literal_quote(
+            str(evidence.get("text", "")),
+            generated_quote,
+        )
+        if quote is None:
+            return None, f"point_{index}:quote_not_exact"
         reason = _point_validation_reason(
             statement,
             quote,
@@ -206,6 +282,12 @@ def validate_generated_target(
                 "statement": statement,
                 "evidence_id": evidence_id,
                 "quote": quote,
+                "quote_alignment": (
+                    "exact"
+                    if quote == generated_quote
+                    else "punctuation_repaired"
+                ),
+                "generated_quote": generated_quote,
                 "source": str(evidence.get("source", "")),
                 "heading": str(evidence.get("heading", "")),
                 "quality_category": str(evidence.get("quality_category", "")),

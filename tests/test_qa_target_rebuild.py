@@ -4,11 +4,13 @@ import pytest
 
 from common.retrieval.markdown_bm25 import SearchResult
 from common.retrieval.qa_target_rebuild import (
+    align_literal_quote,
     assign_group_splits,
     bind_visible_evidence,
     evidence_quote_hits,
     extract_json_object,
     non_text_task_reason,
+    question_query_candidates,
     rebuilt_expected_answer,
     trusted_visible_quote_hits,
     validate_generated_target,
@@ -109,8 +111,10 @@ def test_generated_target_requires_literal_quote_and_safe_target_syntax():
         question="两种 chamber 的特点是什么？",
         evidence_by_id=evidence,
     )
-    assert points is None
-    assert reason == "point_1:quote_not_exact"
+    assert reason == "accepted"
+    assert points is not None
+    assert points[0]["quote"] == "ICP 使用感应线圈耦合，并可独立控制离子能量"
+    assert points[0]["quote_alignment"] == "punctuation_repaired"
 
     delimiter_injected = {
         **punctuation_changed,
@@ -130,6 +134,32 @@ def test_generated_target_requires_literal_quote_and_safe_target_syntax():
     )
     assert points is None
     assert reason == "point_1:reserved_statement_syntax"
+
+
+def test_quote_alignment_requires_one_unambiguous_contiguous_source_span():
+    source = "第一处：连续，原文证据。第二处：连续，原文证据。"
+    assert align_literal_quote("唯一证据：连续，原文。", "连续原文") == (
+        "连续，原文"
+    )
+    assert align_literal_quote(source, "连续原文证据") is None
+    assert (
+        align_literal_quote(
+            "前半段连续原文与后半段证据均完整保留。",
+            "前半段连续原文...后半段证据",
+        )
+        is None
+    )
+
+
+def test_question_query_candidates_only_use_literal_question_clauses():
+    question = "题目：请比较 CCP 与 ICP 的耦合方式；说明各自适用场景。"
+    candidates = question_query_candidates(question)
+    assert candidates == [
+        "请比较 CCP 与 ICP 的耦合方式；说明各自适用场景。",
+        "比较 CCP 与 ICP 的耦合方式",
+        "各自适用场景",
+    ]
+    assert all("答案" not in candidate for candidate in candidates)
 
 
 def test_verifier_and_visible_quote_gates_are_strict():
