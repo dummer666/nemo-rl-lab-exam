@@ -13,6 +13,11 @@ from common.retrieval.markdown_bm25 import SearchResult, question_context, token
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _TRUNCATION_MARKER = re.compile(r"(?:\.{2,}|。{2,}|…|⋯)")
+_INLINE_METADATA = re.compile(
+    r"\*?\[Image OCR\].*?\[End OCR\]\*?|<!--.*?-->",
+    re.IGNORECASE | re.DOTALL,
+)
+_SPAN_BOUNDARY = re.compile(r"[^。！？!?；;\n]+(?:[。！？!?；;]+|$)")
 _ENTITY = re.compile(
     r"[A-Za-z][A-Za-z0-9+._/-]*|\d+(?:\.\d+)?(?:%|℃|°C|V|A|Pa|nm|um|μm)?",
     re.IGNORECASE,
@@ -176,6 +181,105 @@ def question_query_candidates(question: str, max_candidates: int = 8) -> list[st
     return candidates
 
 
+def build_evidence_spans(
+    evidence_by_id: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Pre-cut exact source spans so the teacher selects instead of transcribes."""
+    spans: list[dict[str, Any]] = []
+    seen_quotes = set()
+    for evidence_id, evidence in evidence_by_id.items():
+        text = str(evidence.get("text", ""))
+        masked = list(text)
+        for match in _INLINE_METADATA.finditer(text):
+            for index in range(match.start(), match.end()):
+                if masked[index] in "。！？!?；;\n":
+                    masked[index] = " "
+        for match in _SPAN_BOUNDARY.finditer("".join(masked)):
+            start, end = match.span()
+            while start < end and text[start].isspace():
+                start += 1
+            while end > start and text[end - 1].isspace():
+                end -= 1
+            if start >= end:
+                continue
+            raw_span = text[start:end]
+            raw_chunks = [raw_span]
+            if len(normalize_evidence_text(raw_span)) > 220:
+                raw_chunks = []
+                chunk_start = 0
+                while chunk_start < len(raw_span):
+                    chunk_end = min(len(raw_span), chunk_start + 220)
+                    chunk = raw_span[chunk_start:chunk_end].strip()
+                    if chunk:
+                        raw_chunks.append(chunk)
+                    if chunk_end >= len(raw_span):
+                        break
+                    chunk_start = max(chunk_start + 1, chunk_end - 40)
+            for quote in raw_chunks:
+                quote = quote.strip("…").strip()
+                normalized_length = len(normalize_evidence_text(quote))
+                if (
+                    _TRUNCATION_MARKER.search(quote)
+                    or not 12 <= normalized_length <= 220
+                    or quote in seen_quotes
+                ):
+                    continue
+                seen_quotes.add(quote)
+                spans.append(
+                    {
+                        "span_id": f"S{len(spans) + 1:03d}",
+                        "evidence_id": str(evidence_id),
+                        "quote": quote,
+                        "source": str(evidence.get("source", "")),
+                        "heading": str(evidence.get("heading", "")),
+                        "quality_category": str(
+                            evidence.get("quality_category", "")
+                        ),
+                    }
+                )
+    return spans
+
+
+def materialize_span_references(
+    payload: Mapping[str, Any],
+    span_by_id: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Replace teacher-selected span IDs with their immutable exact source text."""
+    if payload.get("decision") != "answerable":
+        return dict(payload), None
+    raw_points = payload.get("answer_points")
+    if not isinstance(raw_points, list):
+        return dict(payload), None
+
+    materialized_points = []
+    for index, raw_point in enumerate(raw_points, start=1):
+        if not isinstance(raw_point, Mapping):
+            return None, f"point_{index}:invalid_shape"
+        generated_span_id = str(raw_point.get("span_id", "")).strip()
+        match = re.fullmatch(r"[Ss]0*(\d+)", generated_span_id)
+        canonical_span_id = (
+            f"S{int(match.group(1)):03d}"
+            if match
+            else generated_span_id
+        )
+        span = span_by_id.get(canonical_span_id)
+        if span is None:
+            return None, f"point_{index}:unknown_span"
+        materialized_points.append(
+            {
+                **dict(raw_point),
+                "span_id": canonical_span_id,
+                "evidence_id": str(span["evidence_id"]),
+                "quote": str(span["quote"]),
+                "teacher_supplied_quote": raw_point.get("quote"),
+            }
+        )
+    return {
+        **dict(payload),
+        "answer_points": materialized_points,
+    }, None
+
+
 def _canonical_evidence_id(
     evidence_id: str,
     evidence_by_id: Mapping[str, Mapping[str, Any]],
@@ -283,11 +387,20 @@ def validate_generated_target(
                 "evidence_id": evidence_id,
                 "quote": quote,
                 "quote_alignment": (
-                    "exact"
-                    if quote == generated_quote
-                    else "punctuation_repaired"
+                    "selected_span"
+                    if raw_point.get("span_id")
+                    else (
+                        "exact"
+                        if quote == generated_quote
+                        else "punctuation_repaired"
+                    )
                 ),
-                "generated_quote": generated_quote,
+                "generated_quote": (
+                    raw_point.get("teacher_supplied_quote")
+                    if raw_point.get("span_id")
+                    else generated_quote
+                ),
+                "span_id": str(raw_point.get("span_id", "")) or None,
                 "source": str(evidence.get("source", "")),
                 "heading": str(evidence.get("heading", "")),
                 "quality_category": str(evidence.get("quality_category", "")),

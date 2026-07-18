@@ -7,8 +7,10 @@ from common.retrieval.qa_target_rebuild import (
     align_literal_quote,
     assign_group_splits,
     bind_visible_evidence,
+    build_evidence_spans,
     evidence_quote_hits,
     extract_json_object,
+    materialize_span_references,
     non_text_task_reason,
     question_query_candidates,
     rebuilt_expected_answer,
@@ -160,6 +162,65 @@ def test_question_query_candidates_only_use_literal_question_clauses():
         "各自适用场景",
     ]
     assert all("答案" not in candidate for candidate in candidates)
+
+
+def test_span_selection_materializes_exact_source_across_ocr_metadata():
+    source = (
+        "建立评审体系并保持维 *[Image OCR] There is no text. [End OCR]* "
+        "护和持续改进。下一项职责是批准变更。"
+    )
+    evidence = {"E09": _evidence(source)}
+    spans = build_evidence_spans(evidence)
+    matching = [
+        span
+        for span in spans
+        if "建立评审体系" in span["quote"] and "持续改进" in span["quote"]
+    ]
+    assert len(matching) == 1
+    assert matching[0]["quote"] in source
+
+    payload, reason = materialize_span_references(
+        {
+            "decision": "answerable",
+            "answer_points": [
+                {
+                    "statement": "委员会建立评审体系并负责持续改进。",
+                    "span_id": matching[0]["span_id"].lower().replace("s0", "s"),
+                }
+            ],
+        },
+        {span["span_id"]: span for span in spans},
+    )
+    assert reason is None
+    assert payload is not None
+    point = payload["answer_points"][0]
+    assert point["evidence_id"] == "E09"
+    assert point["quote"] == matching[0]["quote"]
+
+
+def test_evidence_spans_remove_only_synthetic_edge_ellipsis():
+    evidence = {
+        "E01": _evidence("…这是完整且连续的有效证据句子。"),
+        "E02": _evidence("前半段证据…后半段证据不能拼接。"),
+    }
+    spans = build_evidence_spans(evidence)
+    quotes = [span["quote"] for span in spans]
+    assert "这是完整且连续的有效证据句子。" in quotes
+    assert all("…" not in quote for quote in quotes)
+
+
+def test_span_selection_rejects_unknown_teacher_reference():
+    payload, reason = materialize_span_references(
+        {
+            "decision": "answerable",
+            "answer_points": [
+                {"statement": "完整事实句。", "span_id": "S999"}
+            ],
+        },
+        {},
+    )
+    assert payload is None
+    assert reason == "point_1:unknown_span"
 
 
 def test_verifier_and_visible_quote_gates_are_strict():

@@ -44,7 +44,9 @@ from common.retrieval.qa_sft import (  # noqa: E402
 from common.retrieval.qa_target_rebuild import (  # noqa: E402
     assign_group_splits,
     bind_visible_evidence,
+    build_evidence_spans,
     extract_json_object,
+    materialize_span_references,
     non_text_task_reason,
     question_fingerprint,
     question_query_candidates,
@@ -65,6 +67,7 @@ DEFAULT_AUDIT_DIR = (
     "short_gold_audit"
 )
 MODEL_NAME = "Qwen/Qwen3.5-9B"
+MAX_PROMPT_TOKENS = 9000
 TARGET_SYSTEM_PROMPT = """
 你是技术问答数据的严格证据编辑器。给定一道简答题和若干真实检索片段，
 只在资料能够完整回答时，从资料中重建 2 至 6 个自包含、可核验的答案要点。
@@ -72,15 +75,15 @@ TARGET_SYSTEM_PROMPT = """
 只能输出一个 JSON 对象，不要输出 Markdown、思考过程或额外文字。
 可回答时格式：
 {"decision":"answerable","answer_points":[
-  {"statement":"完整事实句","evidence_id":"E01","quote":"片段中的连续原文"}
+  {"statement":"完整事实句","span_id":"S001"}
 ]}
 不可回答时格式：
 {"decision":"reject","reason":"简短原因"}
 
 硬规则：
 - 每个 statement 必须直接回答题目，不能只是“代码、设备、流程、步骤、略”等主题词；
-- 每个 quote 必须是对应 evidence_id 文本中 12 至 220 字的连续原文，不得改写；
-- statement 只能归纳 quote 中明确出现的事实，不得补充模型常识、数字或实体；
+- 每个 span_id 必须逐字选择下方给出的真实证据 span；不要自行抄写或改写引文；
+- statement 只能归纳所选 span 中明确出现的事实，不得补充模型常识、数字或实体；
 - 各要点必须互不重复，合起来完整回答题目；
 - 证据不完整、只是题目/答案标签、要求截图上传画图写代码、或只能得到一个要点时必须 reject；
 - 不要猜测旧标准答案；本任务没有向你提供旧标准答案。
@@ -199,10 +202,15 @@ def _generate(
             batch,
             return_tensors="pt",
             padding=True,
-            truncation=True,
-            max_length=7000,
+            truncation=False,
             add_special_tokens=False,
         )
+        prompt_tokens = int(encoded["input_ids"].shape[1])
+        if prompt_tokens > MAX_PROMPT_TOKENS:
+            raise ValueError(
+                f"{label} prompt exceeds {MAX_PROMPT_TOKENS} tokens: "
+                f"{prompt_tokens}"
+            )
         encoded = {key: value.to(model.device) for key, value in encoded.items()}
         input_width = encoded["input_ids"].shape[1]
         generation_kwargs: dict[str, Any] = {
@@ -496,15 +504,26 @@ def _target_prompt(row: Mapping[str, Any]) -> str:
             "evidence_id": item["evidence_id"],
             "source": item["source"],
             "heading": item["heading"],
-            "text": item["text"],
+            "spans": [
+                {
+                    "span_id": span["span_id"],
+                    "text": span["quote"],
+                }
+                for span in row["evidence_spans"]
+                if span["evidence_id"] == item["evidence_id"]
+            ],
         }
         for item in row["evidence"]
     ]
     return (
         f"题目：\n{row['query']}\n\n"
         f"知识库：{row['bank'] or '未指定'}\n\n"
-        "检索证据（仅可使用这些文本）：\n"
-        + json.dumps(evidence, ensure_ascii=False, indent=2)
+        "检索证据（每个要点必须选择一个给定 span_id）：\n"
+        + json.dumps(
+            evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     )
 
 
@@ -730,12 +749,17 @@ def main() -> None:
             top_k=24,
         )
         evidence = _evidence_records(results, retrieval_query)
-        if not evidence:
+        evidence_by_id = {
+            str(item["evidence_id"]): item
+            for item in evidence
+        }
+        evidence_spans = build_evidence_spans(evidence_by_id)
+        if not evidence or not evidence_spans:
             rejected.append(
                 {
                     **row,
                     "stage": "evidence_pool",
-                    "reason": "no_trusted_evidence_snippets",
+                    "reason": "no_trusted_evidence_spans",
                 }
             )
             continue
@@ -744,6 +768,7 @@ def main() -> None:
                 **row,
                 "initial_retrieval_query": retrieval_query,
                 "evidence": evidence,
+                "evidence_spans": evidence_spans,
             }
         )
 
@@ -751,10 +776,37 @@ def main() -> None:
     load_start = time.perf_counter()
     tokenizer, model = _load_teacher()
     model_load_seconds = time.perf_counter() - load_start
-    target_prompts = [
-        _chat_prompt(tokenizer, TARGET_SYSTEM_PROMPT, _target_prompt(row))
-        for row in prepared
-    ]
+    target_rows = []
+    target_prompts = []
+    for row in prepared:
+        prompt = _chat_prompt(
+            tokenizer,
+            TARGET_SYSTEM_PROMPT,
+            _target_prompt(row),
+        )
+        prompt_token_length = len(
+            tokenizer(
+                prompt,
+                add_special_tokens=False,
+            )["input_ids"]
+        )
+        if prompt_token_length > MAX_PROMPT_TOKENS:
+            rejected.append(
+                {
+                    **row,
+                    "stage": "target_prompt",
+                    "reason": "prompt_too_long",
+                    "prompt_token_length": prompt_token_length,
+                }
+            )
+            continue
+        target_rows.append(
+            {
+                **row,
+                "target_prompt_token_length": prompt_token_length,
+            }
+        )
+        target_prompts.append(prompt)
     target_outputs = _generate(
         target_prompts,
         tokenizer,
@@ -770,21 +822,32 @@ def main() -> None:
 
     generation_audit: list[dict[str, Any]] = []
     valid_attempts: list[dict[str, Any]] = []
-    for row, outputs in zip(prepared, target_outputs, strict=True):
+    for row, outputs in zip(target_rows, target_outputs, strict=True):
         evidence_by_id = {
             str(item["evidence_id"]): item
             for item in row["evidence"]
+        }
+        span_by_id = {
+            str(item["span_id"]): item
+            for item in row["evidence_spans"]
         }
         for candidate_index, raw in enumerate(outputs, start=1):
             payload = extract_json_object(raw)
             if payload is None:
                 points, reason = None, "invalid_json"
             else:
-                points, reason = validate_generated_target(
+                materialized, span_reason = materialize_span_references(
                     payload,
-                    question=str(row["query"]),
-                    evidence_by_id=evidence_by_id,
+                    span_by_id,
                 )
+                if materialized is None:
+                    points, reason = None, str(span_reason)
+                else:
+                    points, reason = validate_generated_target(
+                        materialized,
+                        question=str(row["query"]),
+                        evidence_by_id=evidence_by_id,
+                    )
             audit_position = len(generation_audit)
             generation_audit.append(
                 {
@@ -1303,6 +1366,27 @@ def main() -> None:
         },
         "source": source_stats,
         "evidence_pool_ready": len(prepared),
+        "target_prompt_ready": len(target_rows),
+        "target_prompt_token_lengths": {
+            "min": min(
+                (
+                    int(row["target_prompt_token_length"])
+                    for row in target_rows
+                ),
+                default=None,
+            ),
+            "max": max(
+                (
+                    int(row["target_prompt_token_length"])
+                    for row in target_rows
+                ),
+                default=None,
+            ),
+        },
+        "evidence_span_count": sum(
+            len(row["evidence_spans"])
+            for row in prepared
+        ),
         "generation_decision_counts": dict(
             sorted(generation_decision_counts.items())
         ),
