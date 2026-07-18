@@ -240,6 +240,7 @@ def _load_teacher():
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    torch.backends.cuda.enable_cudnn_sdp(False)
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_NAME,
         local_files_only=True,
@@ -262,6 +263,7 @@ def _load_teacher():
     )
     torch.manual_seed(42)
     random.seed(42)
+    print("[short-rebuild] disabled cuDNN SDPA; using stable PyTorch attention backend", flush=True)
     return tokenizer, model
 
 
@@ -810,12 +812,16 @@ def main() -> None:
         )
         for attempt in valid_attempts
     ]
+    print(
+        f"[short-rebuild] deterministic valid attempts={len(valid_attempts)}",
+        flush=True,
+    )
     verify_outputs = _generate(
         verify_prompts,
         tokenizer,
         model,
         label="independent-verification",
-        batch_size=8,
+        batch_size=4,
         max_new_tokens=256,
     )
     verified_by_row: dict[int, list[dict[str, Any]]] = defaultdict(list)
