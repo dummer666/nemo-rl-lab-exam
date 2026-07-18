@@ -450,16 +450,25 @@ def audit_short_label(
 ) -> dict[str, Any]:
     parsed = parse_short_gold(expected, query=query, bank=bank)
     evidence = audit_search_results(results, parsed, top_k=top_k)
-    defect_reasons = list(parsed["label_defect_reasons"])
-    if parsed["keypoint_count"] and not evidence["literal_hit_indexes"]:
-        defect_reasons.append("no_answer_bearing_evidence_mapping")
-    parsed["label_defect_reasons"] = list(dict.fromkeys(defect_reasons))
-    parsed["label_defect"] = bool(parsed["label_defect_reasons"])
+    static_defect_reasons = list(parsed["label_defect_reasons"])
+    evidence_mapping_failure = bool(
+        parsed["keypoint_count"]
+        and not evidence["literal_hit_indexes"]
+    )
+    parsed["static_label_defect_reasons"] = static_defect_reasons
+    parsed["label_defect_reasons"] = static_defect_reasons
+    parsed["label_defect"] = bool(static_defect_reasons)
     attacks = reward_attack_audit(query, expected)
     return {
         **parsed,
         "evidence": evidence,
         "support_level": evidence["trusted_support_level"],
+        "evidence_mapping_failure": evidence_mapping_failure,
+        "evidence_issue_codes": (
+            ["no_answer_bearing_evidence_mapping"]
+            if evidence_mapping_failure
+            else []
+        ),
         "reward_attacks": attacks,
         "attack_full_reward": any(
             float(attack["official_rule_reward"]) >= 1.0

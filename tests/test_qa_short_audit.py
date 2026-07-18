@@ -149,6 +149,23 @@ def test_partial_evidence_is_not_mislabeled_as_synthesis_failure():
     assert "synthesis_failure" not in trace["failure_labels"]
 
 
+def test_missing_retrieval_is_separate_from_static_label_defect():
+    audit = audit_short_label(
+        query="请列出两个独立控制要求。",
+        expected="[short] alpha control ||| beta isolation",
+        bank="controls",
+        results=[_result("没有包含目标事实的无关资料")],
+    )
+
+    assert not audit["label_defect"]
+    assert audit["label_defect_reasons"] == []
+    assert audit["evidence_mapping_failure"]
+    assert audit["evidence_issue_codes"] == [
+        "no_answer_bearing_evidence_mapping"
+    ]
+    assert audit["support_level"] == "none"
+
+
 def test_full_evidence_with_incomplete_answer_is_synthesis_failure():
     query = "请列出两个独立控制要求。"
     expected = "[short] alpha control ||| beta isolation"

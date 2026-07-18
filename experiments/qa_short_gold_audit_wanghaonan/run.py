@@ -739,6 +739,10 @@ def main() -> None:
         for row in public_gold
         for reason in row["label_defect_reasons"]
     )
+    evidence_mapping_failure_count = sum(
+        bool(row["evidence_mapping_failure"])
+        for row in public_gold
+    )
     trace_source_counts = Counter(str(row["trace_source"]) for row in trace_rows)
     false_perfect_by_source = Counter(
         str(row["trace_source"])
@@ -758,7 +762,7 @@ def main() -> None:
         and not row["logged_reward_matches_official_rule"]
     ]
     summary = {
-        "audit_version": 1,
+        "audit_version": 2,
         "read_only": True,
         "official_rule_reward_modified": False,
         "semantic_judge_used": False,
@@ -788,6 +792,12 @@ def main() -> None:
                 [str(row["support_level"]) for row in public_gold]
             ),
             "label_defect_reasons": dict(sorted(label_issue_counts.items())),
+            "evidence_mapping_failure_count": evidence_mapping_failure_count,
+            "evidence_mapping_failure_rate": (
+                evidence_mapping_failure_count / len(public_gold)
+                if public_gold
+                else 0.0
+            ),
             "attack_full_reward_counts": dict(sorted(attack_full_reward_counts.items())),
             "false_perfect_attack_count": sum(
                 bool(row["false_perfect_attack"]) for row in public_gold
