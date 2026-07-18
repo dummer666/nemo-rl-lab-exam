@@ -4,6 +4,7 @@ import pytest
 
 from common.retrieval.markdown_bm25 import (
     MarkdownBM25Index,
+    SearchResult,
     build_retrieval_query,
     classify_document_quality,
     extract_search_query,
@@ -200,6 +201,28 @@ def test_agent_allows_one_format_retry_then_penalizes(tmp_path):
     assert second.reward == FORMAT_PENALTY
 
 
+def test_agent_rejects_mixed_search_and_final_answer(tmp_path):
+    runner = QARetrievalRunner(_build_index(tmp_path), qa_rule_reward_fn)
+    metadata = {
+        "query": "题目：离子注入系统包括什么？",
+        "expected_answer": "[single] A",
+        "search_count": 0,
+        "search_queries": [],
+        "invalid_count": 0,
+    }
+
+    turn = runner.process(
+        r"<search>离子注入 系统组成</search> \boxed{A}",
+        metadata,
+    )
+
+    assert not turn.terminated
+    assert turn.reward == 0.0
+    assert turn.metadata["invalid_count"] == 1
+    assert turn.metadata["search_count"] == 0
+    assert "不能同时检索并提交" in turn.observation
+
+
 def test_agent_terminates_invalid_answer_after_searches_exhausted(tmp_path):
     runner = QARetrievalRunner(
         _build_index(tmp_path),
@@ -285,6 +308,94 @@ def test_agent_rewards_only_incremental_evidence_and_penalizes_duplicate(tmp_pat
     duplicate = runner.process("<search>离子注入 系统组成</search>", first.metadata)
     assert duplicate.reward == pytest.approx(-0.03)
     assert duplicate.metadata["evidence_coverage"] == pytest.approx(2 / 3)
+
+
+def test_agent_does_not_reward_keypoint_hidden_outside_visible_snippet(tmp_path):
+    (tmp_path / "hidden.md").write_text(
+        "# Hidden evidence\n"
+        + "queryanchor "
+        + ("中间内容" * 40)
+        + " 秘密答案",
+        encoding="utf-8",
+    )
+    index = MarkdownBM25Index.from_directory(
+        tmp_path,
+        chunk_chars=400,
+        overlap_chars=20,
+    )
+    runner = QARetrievalRunner(
+        index,
+        qa_rule_reward_fn,
+        top_k=1,
+        candidate_k=1,
+        max_result_chars=200,
+        per_result_chars=60,
+        evidence_reward_scale=0.1,
+    )
+    metadata = {
+        "query": "题目：请根据 queryanchor 资料作答。",
+        "expected_answer": "[short] 秘密答案",
+        "search_count": 0,
+        "search_queries": [],
+        "evidence_hits": [],
+    }
+
+    turn = runner.process("<search>queryanchor</search>", metadata)
+
+    assert "秘密答案" not in turn.observation
+    assert turn.metadata["evidence_hits"] == []
+    assert turn.metadata["evidence_coverage"] == 0.0
+    assert turn.reward == 0.0
+
+
+def test_agent_requires_visible_keypoint_in_same_trusted_result():
+    class StubIndex:
+        def search(
+            self,
+            _query: str,
+            *,
+            top_k: int,
+            candidate_k: int,
+            quality_rerank: bool,
+        ) -> list[SearchResult]:
+            del top_k, candidate_k, quality_rerank
+            return [
+                SearchResult(
+                    source="questions.md",
+                    heading="考试题",
+                    text="queryanchor alpha",
+                    score=2.0,
+                    quality_category="question-only",
+                ),
+                SearchResult(
+                    source="reference.md",
+                    heading="参考资料",
+                    text="queryanchor alpha",
+                    score=1.0,
+                    quality_category="reference",
+                ),
+            ]
+
+    runner = QARetrievalRunner(
+        StubIndex(),  # type: ignore[arg-type]
+        qa_rule_reward_fn,
+        max_result_chars=75,
+        per_result_chars=100,
+        evidence_reward_scale=0.1,
+    )
+    turn = runner.process(
+        "<search>queryanchor</search>",
+        {
+            "expected_answer": "[short] alpha",
+            "query": "测试问题",
+            "search_count": 0,
+        },
+    )
+
+    assert turn.reward == 0.0
+    assert turn.metadata is not None
+    assert turn.metadata["evidence_hits"] == []
+    assert turn.metadata["evidence_coverage"] == 0.0
 
 
 def test_agent_validation_shaping_defaults_to_disabled(tmp_path):

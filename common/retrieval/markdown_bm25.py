@@ -369,6 +369,40 @@ def best_snippet(text: str, query: str, limit: int) -> str:
     return prefix + compact[start:end].strip() + suffix
 
 
+def format_search_results_with_visible_snippets(
+    results: list[SearchResult],
+    query: str,
+    *,
+    max_chars: int = 1800,
+    per_result_chars: int = 520,
+) -> tuple[str, list[str]]:
+    """Format results and return the exact visible snippet text for each result."""
+    if not results:
+        return (
+            "[检索结果]\n未找到匹配文档。请改用更具体的设备、流程或规范关键词。",
+            [],
+        )
+
+    blocks = ["[检索结果]"]
+    snippet_offsets: list[tuple[int, str]] = []
+    for index, result in enumerate(results, start=1):
+        snippet = best_snippet(result.text, query, per_result_chars)
+        snippet = snippet.replace("<search", "＜search").replace("</search>", "＜/search＞")
+        heading = f" · {result.heading}" if result.heading else ""
+        display_score = result.raw_score if result.raw_score is not None else result.score
+        header = f"{index}. 来源：{result.source}{heading}\n相关度：{display_score:.2f}\n"
+        block_start = sum(len(block) for block in blocks) + 2 * len(blocks)
+        snippet_offsets.append((block_start + len(header), snippet))
+        blocks.append(header + snippet)
+
+    rendered = "\n\n".join(blocks)[:max_chars]
+    visible_snippets = [
+        snippet[: max(0, min(len(snippet), len(rendered) - offset))]
+        for offset, snippet in snippet_offsets
+    ]
+    return rendered, visible_snippets
+
+
 def format_search_results(
     results: list[SearchResult],
     query: str,
@@ -377,14 +411,9 @@ def format_search_results(
     per_result_chars: int = 520,
 ) -> str:
     """Format ranked snippets for safe, bounded environment feedback."""
-    if not results:
-        return "[检索结果]\n未找到匹配文档。请改用更具体的设备、流程或规范关键词。"
-
-    blocks = ["[检索结果]"]
-    for index, result in enumerate(results, start=1):
-        snippet = best_snippet(result.text, query, per_result_chars)
-        snippet = snippet.replace("<search", "＜search").replace("</search>", "＜/search＞")
-        heading = f" · {result.heading}" if result.heading else ""
-        display_score = result.raw_score if result.raw_score is not None else result.score
-        blocks.append(f"{index}. 来源：{result.source}{heading}\n相关度：{display_score:.2f}\n{snippet}")
-    return "\n\n".join(blocks)[:max_chars]
+    return format_search_results_with_visible_snippets(
+        results,
+        query,
+        max_chars=max_chars,
+        per_result_chars=per_result_chars,
+    )[0]

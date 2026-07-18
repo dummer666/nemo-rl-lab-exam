@@ -6,15 +6,15 @@ from dataclasses import dataclass
 from typing import Callable, TypedDict
 
 from common.retrieval.evidence import (
-    evidence_keypoint_hits,
     expected_keypoints,
     normalize_evidence_text,
+    text_keypoint_hits,
 )
 from common.retrieval.markdown_bm25 import (
     MarkdownBM25Index,
     build_retrieval_query,
     extract_search_query,
-    format_search_results,
+    format_search_results_with_visible_snippets,
 )
 from common.rewards.qa_reward import FORMAT_PENALTY, extract_boxed
 
@@ -139,7 +139,15 @@ class QARetrievalRunner:
         original_query = str(metadata.get("query", ""))
         minimum_searches = self._minimum_searches(metadata)
 
-        if extract_boxed(response) is not None:
+        boxed = extract_boxed(response)
+        search_query = extract_search_query(response)
+        if boxed is not None and search_query is not None:
+            return self._invalid_action(
+                metadata,
+                "同一轮不能同时检索并提交最终答案",
+            )
+
+        if boxed is not None:
             search_count = int(metadata.get("search_count", 0))
             if search_count < minimum_searches:
                 remaining_required = minimum_searches - search_count
@@ -171,7 +179,6 @@ class QARetrievalRunner:
                 answer=expected,
             )
 
-        search_query = extract_search_query(response)
         if search_query is None:
             return self._invalid_action(metadata, "未检测到检索动作或最终 boxed 答案")
         if not search_query:
@@ -203,7 +210,7 @@ class QARetrievalRunner:
             candidate_k=self.candidate_k,
             quality_rerank=self.quality_rerank,
         )
-        rendered = format_search_results(
+        rendered, visible_snippets = format_search_results_with_visible_snippets(
             results,
             retrieval_query,
             max_chars=self.max_result_chars,
@@ -222,7 +229,10 @@ class QARetrievalRunner:
         previous_hits = {
             int(hit) for hit in metadata.get("evidence_hits", []) if isinstance(hit, int) and 0 <= hit < len(keypoints)
         }
-        current_hits = evidence_keypoint_hits(results, keypoints, top_k=self.top_k)
+        current_hits: set[int] = set()
+        for result, snippet in zip(results, visible_snippets, strict=True):
+            if result.quality_category not in {"question-only", "noise"}:
+                current_hits.update(text_keypoint_hits(snippet, keypoints))
         cumulative_hits = previous_hits | current_hits
         if keypoints:
             coverage_delta = (len(cumulative_hits) - len(previous_hits)) / len(keypoints)
