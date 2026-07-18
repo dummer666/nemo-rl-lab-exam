@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, TypedDict
 
+from common.retrieval.evidence import (
+    evidence_keypoint_hits,
+    expected_keypoints,
+    normalize_evidence_text,
+)
 from common.retrieval.markdown_bm25 import (
     MarkdownBM25Index,
     build_retrieval_query,
@@ -21,6 +26,11 @@ class QARetrievalMetadata(TypedDict, total=False):
     search_count: int
     search_queries: list[str]
     invalid_count: int
+    force_search: bool
+    evidence_hits: list[int]
+    evidence_coverage: float
+    curriculum_step: int
+    curriculum_phase: str
 
 
 RewardFn = Callable[..., list[float]]
@@ -51,11 +61,16 @@ class QARetrievalRunner:
         quality_rerank: bool = False,
         max_result_chars: int = 1800,
         per_result_chars: int = 520,
+        evidence_reward_scale: float = 0.0,
+        search_cost: float = 0.0,
+        duplicate_query_penalty: float = 0.0,
     ):
         if max_searches < 1:
             raise ValueError("max_searches must be positive")
         if max_invalid_actions < 1:
             raise ValueError("max_invalid_actions must be positive")
+        if min(evidence_reward_scale, search_cost, duplicate_query_penalty) < 0:
+            raise ValueError("reward shaping values must be non-negative")
         self.index = index
         self.reward_fn = reward_fn
         self.max_searches = max_searches
@@ -65,6 +80,9 @@ class QARetrievalRunner:
         self.quality_rerank = quality_rerank
         self.max_result_chars = max_result_chars
         self.per_result_chars = per_result_chars
+        self.evidence_reward_scale = evidence_reward_scale
+        self.search_cost = search_cost
+        self.duplicate_query_penalty = duplicate_query_penalty
 
     def _invalid_action(
         self,
@@ -112,6 +130,18 @@ class QARetrievalRunner:
         original_query = str(metadata.get("query", ""))
 
         if extract_boxed(response) is not None:
+            if bool(metadata.get("force_search")) and int(metadata.get("search_count", 0)) == 0:
+                return AgentTurn(
+                    observation=(
+                        "[检索预热] 这道开放题必须先检索一次再提交答案。"
+                        r"请输出 <search>关键词</search>。"
+                    ),
+                    reward=0.0,
+                    terminated=False,
+                    stop_strings=["</search>"],
+                    metadata=dict(metadata),
+                    answer=None,
+                )
             reward = float(
                 self.reward_fn(
                     [original_query],
@@ -175,6 +205,32 @@ class QARetrievalRunner:
             *list(metadata.get("search_queries", [])),
             search_query,
         ]
+        _question_type, keypoints = expected_keypoints(expected)
+        previous_hits = {
+            int(hit)
+            for hit in metadata.get("evidence_hits", [])
+            if isinstance(hit, int) and 0 <= hit < len(keypoints)
+        }
+        current_hits = evidence_keypoint_hits(results, keypoints, top_k=self.top_k)
+        cumulative_hits = previous_hits | current_hits
+        if keypoints:
+            coverage_delta = (len(cumulative_hits) - len(previous_hits)) / len(keypoints)
+            next_metadata["evidence_hits"] = sorted(cumulative_hits)
+            next_metadata["evidence_coverage"] = len(cumulative_hits) / len(keypoints)
+        else:
+            coverage_delta = 0.0
+            next_metadata["evidence_hits"] = []
+            next_metadata["evidence_coverage"] = 0.0
+
+        normalized_query = normalize_evidence_text(search_query)
+        duplicate_query = any(
+            normalize_evidence_text(previous_query) == normalized_query
+            for previous_query in metadata.get("search_queries", [])
+        )
+        search_reward = self.evidence_reward_scale * max(0.0, coverage_delta) - self.search_cost
+        if duplicate_query:
+            search_reward -= self.duplicate_query_penalty
+
         remaining = self.max_searches - next_count
         if remaining:
             guidance = (
@@ -183,9 +239,11 @@ class QARetrievalRunner:
             )
         else:
             guidance = r"\n\n检索次数已用完，下一轮必须提交 \boxed{...}。"
+        if duplicate_query and self.duplicate_query_penalty:
+            guidance += "\n[检索反馈] 本次关键词与之前重复，请避免无信息增量的检索。"
         return AgentTurn(
             observation=rendered + guidance,
-            reward=0.0,
+            reward=search_reward,
             terminated=False,
             stop_strings=["</search>"],
             metadata=next_metadata,

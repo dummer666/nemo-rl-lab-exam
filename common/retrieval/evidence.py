@@ -45,11 +45,26 @@ def evidence_coverage(
 ) -> float:
     if not keypoints:
         return 0.0
+    return len(evidence_keypoint_hits(results, keypoints, top_k=top_k)) / len(keypoints)
+
+
+def evidence_keypoint_hits(
+    results: Sequence[SearchResult],
+    keypoints: Sequence[Sequence[str]],
+    *,
+    top_k: int,
+) -> set[int]:
+    """Return gold keypoint indexes supported by answer-bearing retrieval results."""
+    if not keypoints:
+        return set()
     searchable = [
         result
         for result in results[:top_k]
         if result.quality_category not in {"question-only", "noise"}
     ]
     evidence = normalize_evidence_text("\n".join(result.text for result in searchable))
-    hits = sum(any(alternative in evidence for alternative in alternatives) for alternatives in keypoints)
-    return hits / len(keypoints)
+    return {
+        index
+        for index, alternatives in enumerate(keypoints)
+        if any(alternative in evidence for alternative in alternatives)
+    }

@@ -68,6 +68,9 @@ class QARetrievalEnv(EnvironmentInterface[QARetrievalMetadata]):
             quality_rerank=bool(config.get("quality_rerank", False)),
             max_result_chars=int(config.get("max_result_chars", 1800)),
             per_result_chars=int(config.get("per_result_chars", 520)),
+            evidence_reward_scale=float(config.get("evidence_reward_scale", 0.0)),
+            search_cost=float(config.get("search_cost", 0.0)),
+            duplicate_query_penalty=float(config.get("duplicate_query_penalty", 0.0)),
         )
 
     def step(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from common.retrieval.markdown_bm25 import (
     MarkdownBM25Index,
     build_retrieval_query,
@@ -213,3 +215,64 @@ def test_agent_terminates_invalid_answer_after_searches_exhausted(tmp_path):
     turn = runner.process("检索后仍未提交答案", metadata)
     assert turn.terminated is True
     assert turn.reward == FORMAT_PENALTY
+
+
+def test_agent_forces_warmup_search_before_open_answer(tmp_path):
+    runner = QARetrievalRunner(_build_index(tmp_path), qa_rule_reward_fn)
+    metadata = {
+        "query": "题目：离子注入系统包括什么？",
+        "expected_answer": "[short] 离子源 ||| 分析磁场",
+        "force_search": True,
+        "search_count": 0,
+        "search_queries": [],
+    }
+
+    rejected = runner.process(r"\boxed{离子源; 分析磁场}", metadata)
+    assert rejected.terminated is False
+    assert rejected.reward == 0.0
+    assert "必须先检索" in rejected.observation
+
+    searched = runner.process("<search>离子注入 系统组成</search>", rejected.metadata)
+    submitted = runner.process(r"\boxed{离子源; 分析磁场}", searched.metadata)
+    assert submitted.terminated is True
+    assert submitted.reward == 1.0
+
+
+def test_agent_rewards_only_incremental_evidence_and_penalizes_duplicate(tmp_path):
+    runner = QARetrievalRunner(
+        _build_index(tmp_path),
+        qa_rule_reward_fn,
+        evidence_reward_scale=0.1,
+        search_cost=0.01,
+        duplicate_query_penalty=0.02,
+    )
+    metadata = {
+        "query": "题目：离子注入系统包括什么？",
+        "expected_answer": "[short] 离子源 ||| 分析磁场 ||| 真空系统",
+        "search_count": 0,
+        "search_queries": [],
+        "evidence_hits": [],
+    }
+
+    first = runner.process("<search>离子注入 系统组成</search>", metadata)
+    assert first.reward == pytest.approx(0.1 * (2 / 3) - 0.01)
+    assert first.metadata["evidence_coverage"] == pytest.approx(2 / 3)
+
+    duplicate = runner.process("<search>离子注入 系统组成</search>", first.metadata)
+    assert duplicate.reward == pytest.approx(-0.03)
+    assert duplicate.metadata["evidence_coverage"] == pytest.approx(2 / 3)
+
+
+def test_agent_validation_shaping_defaults_to_disabled(tmp_path):
+    runner = QARetrievalRunner(_build_index(tmp_path), qa_rule_reward_fn)
+    metadata = {
+        "query": "题目：离子注入系统包括什么？",
+        "expected_answer": "[short] 离子源 ||| 分析磁场",
+        "search_count": 0,
+        "search_queries": [],
+    }
+
+    first = runner.process("<search>离子注入 系统组成</search>", metadata)
+    duplicate = runner.process("<search>离子注入 系统组成</search>", first.metadata)
+    assert first.reward == 0.0
+    assert duplicate.reward == 0.0
