@@ -6,10 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import time
-import unicodedata
 from collections import defaultdict
 from pathlib import Path
 from typing import Sequence
@@ -19,6 +17,7 @@ REPO_ROOT = THIS_DIR.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from common.retrieval.evidence import evidence_coverage, expected_keypoints  # noqa: E402
 from common.retrieval.markdown_bm25 import (  # noqa: E402
     MarkdownBM25Index,
     SearchResult,
@@ -30,9 +29,6 @@ from common.retrieval.semantic_reranker import (  # noqa: E402
     reciprocal_rank_fusion,
     rerank_by_semantic,
 )
-
-_EXPECTED = re.compile(r"^\s*\[(\w+)\]\s*(.*)", re.DOTALL)
-_PUNCT = re.compile(r"[\s，,。．.、；;：:！!？?\"'`（）()【】\[\]{}<>]+")
 
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -48,49 +44,6 @@ def _read_jsonl(path: Path) -> list[dict]:
             if line.strip():
                 rows.append(json.loads(line))
     return rows
-
-
-def _normalize(text: str) -> str:
-    normalized = unicodedata.normalize("NFKC", str(text)).lower()
-    normalized = normalized.replace("μ", "u").replace("µ", "u")
-    return _PUNCT.sub("", normalized)
-
-
-def _gold_keypoints(expected: str) -> tuple[str, list[list[str]]]:
-    match = _EXPECTED.match(str(expected))
-    if not match:
-        return "unknown", []
-    question_type, answer = match.group(1).lower(), match.group(2)
-    if question_type not in {"fill", "short"}:
-        return question_type, []
-    keypoints = []
-    for raw_point in answer.split("|||"):
-        parts = re.split(r"[/／]", raw_point)
-        alternatives = {_normalize(part) for part in parts}
-        if len(parts) == 1:
-            alternatives.add(_normalize(raw_point))
-        alternatives.discard("")
-        if alternatives:
-            keypoints.append(sorted(alternatives, key=len, reverse=True))
-    return question_type, keypoints
-
-
-def _evidence_coverage(
-    results: Sequence[SearchResult],
-    keypoints: Sequence[Sequence[str]],
-    *,
-    top_k: int,
-) -> float:
-    if not keypoints:
-        return 0.0
-    searchable = [
-        result
-        for result in results[:top_k]
-        if result.quality_category not in {"question-only", "noise"}
-    ]
-    evidence = _normalize("\n".join(result.text for result in searchable))
-    hits = sum(any(alternative in evidence for alternative in alternatives) for alternatives in keypoints)
-    return hits / len(keypoints)
 
 
 def _top1_question_only(results: Sequence[SearchResult]) -> int:
@@ -203,7 +156,7 @@ def main() -> None:
             stats[method_name]["evaluated_rows"] += 1
             stats[method_name]["top1_question_only"] += _top1_question_only(results)
 
-        question_type, keypoints = _gold_keypoints(expected)
+        question_type, keypoints = expected_keypoints(expected)
         type_counts[question_type] += 1
         if keypoints:
             open_rows += 1
@@ -222,7 +175,7 @@ def main() -> None:
                 stats[method_name]["open_rows"] += 1
                 stats[method_name]["top1_question_only_open"] += _top1_question_only(results)
                 for top_k in (3, 20):
-                    coverage = _evidence_coverage(results, keypoints, top_k=top_k)
+                    coverage = evidence_coverage(results, keypoints, top_k=top_k)
                     stats[method_name][f"coverage_at_{top_k}"] += coverage
                     stats[method_name][f"full_coverage_at_{top_k}"] += int(coverage >= 1.0)
                     if top_k == 3:

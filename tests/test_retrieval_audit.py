@@ -1,17 +1,17 @@
-from common.retrieval.markdown_bm25 import SearchResult
-from experiments.retrieval_qa_audit_wanghaonan.run import (
-    _evidence_coverage,
-    _gold_keypoints,
-    _normalize,
+from common.retrieval.evidence import (
+    evidence_coverage,
+    expected_keypoints,
+    normalize_evidence_text,
 )
+from common.retrieval.markdown_bm25 import SearchResult
 
 
 def test_gold_keypoints_normalize_fill_alternatives():
-    question_type, points = _gold_keypoints("[fill] 3 V/3V ||| OPC Server")
+    question_type, points = expected_keypoints("[fill] 3 V/3V ||| OPC Server")
 
     assert question_type == "fill"
     assert points == [["3v"], ["opcserver"]]
-    assert _normalize("３ μm") == "3um"
+    assert normalize_evidence_text("３ μm") == "3um"
 
 
 def test_evidence_coverage_ignores_question_only_documents():
@@ -29,6 +29,6 @@ def test_evidence_coverage_ignores_question_only_documents():
         score=0.9,
         quality_category="reference",
     )
-    _, points = _gold_keypoints("[short] expected answer phrase ||| OPC server")
+    _, points = expected_keypoints("[short] expected answer phrase ||| OPC server")
 
-    assert _evidence_coverage([question, manual], points, top_k=2) == 0.5
+    assert evidence_coverage([question, manual], points, top_k=2) == 0.5
