@@ -3,11 +3,16 @@ from __future__ import annotations
 from common.retrieval.markdown_bm25 import (
     MarkdownBM25Index,
     build_retrieval_query,
+    classify_document_quality,
     extract_search_query,
     format_search_results,
     question_context,
 )
 from common.retrieval.qa_agent import QARetrievalRunner
+from common.retrieval.semantic_reranker import (
+    reciprocal_rank_fusion,
+    rerank_by_semantic,
+)
 from common.rewards.qa_reward import FORMAT_PENALTY, qa_rule_reward_fn
 
 
@@ -78,6 +83,64 @@ def test_result_format_is_bounded(tmp_path):
     assert rendered.startswith("[检索结果]")
     assert "来源：" in rendered
     assert len(rendered) <= 180
+
+
+def test_document_quality_classification():
+    answer = classify_document_quality("培训试题&答案.md", "答案", "正确答案：A")
+    question = classify_document_quality("设备培训试卷.md", "填空题", "1. SERVER ROOM 通过____连接")
+    reference = classify_document_quality("设备手册.md", "连接架构", "SERVER ROOM 通过 OPC server 连接。")
+    noise = classify_document_quality("ocr.md", "Page 1", "\ufffd\ufffd\ufffd")
+
+    assert answer.category == "answer-bearing"
+    assert question.category == "question-only"
+    assert reference.category == "reference"
+    assert noise.category == "noise"
+    assert answer.weight > reference.weight > question.weight > noise.weight
+
+
+def test_quality_rerank_demotes_question_only_exam(tmp_path):
+    (tmp_path / "exact-question-exam.md").write_text(
+        "# SERVER ROOM 试题\nSERVER ROOM 通过什么与 Clean room 连接？\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "system-manual.md").write_text(
+        "# SERVER ROOM 连接架构\n设备手册规定 SERVER ROOM 通过 OPC server 与 Clean room 连接。\n",
+        encoding="utf-8",
+    )
+    index = MarkdownBM25Index.from_directory(tmp_path, chunk_chars=240, overlap_chars=20)
+
+    baseline = index.search("SERVER ROOM 通过什么与 Clean room 连接", top_k=1)
+    reranked = index.search(
+        "SERVER ROOM 通过什么与 Clean room 连接",
+        top_k=1,
+        candidate_k=2,
+        quality_rerank=True,
+    )
+
+    assert baseline[0].source == "exact-question-exam.md"
+    assert reranked[0].source == "system-manual.md"
+    assert reranked[0].quality_category == "reference"
+    assert index.quality_category_counts["question-only"] == 1
+
+
+def test_hybrid_rerank_combines_semantics_and_quality(tmp_path):
+    (tmp_path / "device-exam.md").write_text(
+        "# Device Exam\nHow many monitor items does ICS8000 have?\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "device-manual.md").write_text(
+        "# Device Manual\nThe ICS8000 concentration monitor has twelve monitored items.\n",
+        encoding="utf-8",
+    )
+    index = MarkdownBM25Index.from_directory(tmp_path, chunk_chars=240, overlap_chars=20)
+    candidates = index.search("ICS8000 monitor items", top_k=2)
+    semantic_scores = [0.95 if result.source == "device-exam.md" else 0.85 for result in candidates]
+
+    semantic = rerank_by_semantic(candidates, semantic_scores)
+    hybrid = reciprocal_rank_fusion(candidates, semantic_scores)
+
+    assert semantic[0].source == "device-exam.md"
+    assert hybrid[0].source == "device-manual.md"
 
 
 def test_agent_search_then_submit_answer(tmp_path):

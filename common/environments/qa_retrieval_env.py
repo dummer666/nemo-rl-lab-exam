@@ -43,8 +43,12 @@ class QARetrievalEnv(EnvironmentInterface[QARetrievalMetadata]):
             overlap_chars=int(config.get("chunk_overlap_chars", 160)),
             k1=float(config.get("bm25_k1", 1.5)),
             b=float(config.get("bm25_b", 0.75)),
+            quality_weights=dict(config.get("quality_weights", {})),
         )
-        print(f"[qa-retrieval] indexed {index.num_documents} chunks from {docs_dir}")
+        print(
+            f"[qa-retrieval] indexed {index.num_documents} chunks from {docs_dir}; "
+            f"quality={index.quality_category_counts}"
+        )
 
         if bool(config.get("use_judge", True)):
             from common.rewards.qa_judge_reward import qa_judge_reward_fn
@@ -60,6 +64,8 @@ class QARetrievalEnv(EnvironmentInterface[QARetrievalMetadata]):
             max_searches=int(config.get("max_searches", 2)),
             max_invalid_actions=int(config.get("max_invalid_actions", 2)),
             top_k=int(config.get("top_k", 3)),
+            candidate_k=int(config.get("candidate_k", config.get("top_k", 3))),
+            quality_rerank=bool(config.get("quality_rerank", False)),
             max_result_chars=int(config.get("max_result_chars", 1800)),
             per_result_chars=int(config.get("per_result_chars", 520)),
         )

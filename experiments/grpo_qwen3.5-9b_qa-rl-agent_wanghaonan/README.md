@@ -19,8 +19,8 @@ Qwen 3.5 9B Base 的多轮 QA GRPO 实验。模型可在最终作答前检索集
 \boxed{空1; 空2}
 ```
 
-客观题和填空沿用 `common/rewards/qa_reward.py`，简答题沿用平台注入的
-LLM judge；judge 不可达时按仓库既有逻辑回退到关键词覆盖率。
+客观题和填空沿用 `common/rewards/qa_reward.py`。简答题配置会尝试调用
+本地 LLM judge；训练作业不会自动启动该服务，不可达时会回退到关键词覆盖率。
 
 ## 实现
 

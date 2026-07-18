@@ -7,6 +7,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 _ALNUM = re.compile(r"[a-z0-9]+(?:[._+#/-][a-z0-9]+)*", re.IGNORECASE)
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
@@ -18,6 +19,25 @@ _QUESTION = re.compile(
 _SEARCH_OPEN = re.compile(r"<search(?:\s[^>]*)?>", re.IGNORECASE)
 _SEARCH_CLOSE = re.compile(r"</search\s*>", re.IGNORECASE)
 _WHITESPACE = re.compile(r"\s+")
+_ANSWER_MARKERS = re.compile(
+    r"答案|答题解析|标准解答|参考解答|answer\s*key|answers?\b|solution",
+    re.IGNORECASE,
+)
+_ANSWER_TEXT_MARKERS = re.compile(
+    r"(?:正确|标准|参考)?答案\s*[：:]|(?:正确|标准|参考)?答案(?:是|为)",
+    re.IGNORECASE,
+)
+_EXAM_MARKERS = re.compile(
+    r"试题|试卷|考题|题库|考试|练习题|测验|(?:^|[\W_])(?:quiz|exam)(?:$|[\W_])",
+    re.IGNORECASE,
+)
+
+DEFAULT_QUALITY_WEIGHTS = {
+    "answer-bearing": 1.15,
+    "reference": 1.0,
+    "question-only": 0.45,
+    "noise": 0.1,
+}
 
 _STOP_TERMS = {
     "一道",
@@ -53,6 +73,43 @@ class SearchResult:
     heading: str
     text: str
     score: float
+    raw_score: float | None = None
+    quality_category: str = "reference"
+    quality_weight: float = 1.0
+
+
+@dataclass(frozen=True)
+class DocumentQuality:
+    """Retrieval prior derived from document structure without deleting source data."""
+
+    category: str
+    weight: float
+
+
+def classify_document_quality(
+    source: str,
+    heading: str,
+    text: str,
+    *,
+    weights: Mapping[str, float] | None = None,
+) -> DocumentQuality:
+    """Classify answer-bearing, reference, question-only, and corrupted chunks."""
+    quality_weights = {**DEFAULT_QUALITY_WEIGHTS, **dict(weights or {})}
+    visible = _WHITESPACE.sub("", str(text))
+    replacement_ratio = visible.count("\ufffd") / max(1, len(visible))
+    if not visible or replacement_ratio >= 0.05:
+        category = "noise"
+    else:
+        label = f"{source}\n{heading}"
+        has_answer = bool(_ANSWER_MARKERS.search(label) or _ANSWER_TEXT_MARKERS.search(text))
+        is_exam = bool(_EXAM_MARKERS.search(label))
+        if has_answer:
+            category = "answer-bearing"
+        elif is_exam:
+            category = "question-only"
+        else:
+            category = "reference"
+    return DocumentQuality(category=category, weight=float(quality_weights[category]))
 
 
 def tokenize(text: str) -> list[str]:
@@ -169,14 +226,25 @@ class MarkdownBM25Index:
         *,
         k1: float = 1.5,
         b: float = 0.75,
+        quality_weights: Mapping[str, float] | None = None,
     ):
         if not chunks:
             raise ValueError("Cannot build a retrieval index without Markdown content")
         self._chunks = chunks
         self.k1 = float(k1)
         self.b = float(b)
+        self.quality_weights = {**DEFAULT_QUALITY_WEIGHTS, **dict(quality_weights or {})}
         self._lengths: list[int] = []
         self._postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        self._qualities = [
+            classify_document_quality(
+                chunk.source,
+                chunk.heading,
+                chunk.text,
+                weights=self.quality_weights,
+            )
+            for chunk in chunks
+        ]
 
         for doc_id, chunk in enumerate(chunks):
             weighted = f"{chunk.source} {chunk.source} {chunk.heading} {chunk.heading} {chunk.text}"
@@ -195,6 +263,11 @@ class MarkdownBM25Index:
     def num_documents(self) -> int:
         return len(self._chunks)
 
+    @property
+    def quality_category_counts(self) -> dict[str, int]:
+        counts = Counter(quality.category for quality in self._qualities)
+        return {category: counts.get(category, 0) for category in DEFAULT_QUALITY_WEIGHTS}
+
     @classmethod
     def from_directory(
         cls,
@@ -204,6 +277,7 @@ class MarkdownBM25Index:
         overlap_chars: int = 160,
         k1: float = 1.5,
         b: float = 0.75,
+        quality_weights: Mapping[str, float] | None = None,
     ) -> "MarkdownBM25Index":
         root_path = Path(root)
         if not root_path.is_dir():
@@ -222,11 +296,19 @@ class MarkdownBM25Index:
         chunks: list[_Chunk] = []
         for path in files:
             chunks.extend(_chunks_from_file(path, root_path, chunk_chars, overlap_chars))
-        return cls(chunks, k1=k1, b=b)
+        return cls(chunks, k1=k1, b=b, quality_weights=quality_weights)
 
-    def search(self, query: str, top_k: int = 3) -> list[SearchResult]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 3,
+        *,
+        candidate_k: int | None = None,
+        quality_rerank: bool = False,
+    ) -> list[SearchResult]:
         if top_k <= 0:
             return []
+        candidate_limit = max(top_k, int(candidate_k or top_k))
         query_counts = Counter(tokenize(query))
         scores: dict[int, float] = defaultdict(float)
         for term, query_frequency in query_counts.items():
@@ -247,18 +329,26 @@ class MarkdownBM25Index:
             chunk = self._chunks[doc_id]
             if source_counts[chunk.source] >= 2:
                 continue
+            quality = self._qualities[doc_id]
+            candidate_rank = len(selected) + 1
+            adjusted_score = quality.weight / (60.0 + candidate_rank) if quality_rerank else score
             selected.append(
                 SearchResult(
                     source=chunk.source,
                     heading=chunk.heading,
                     text=chunk.text,
-                    score=score,
+                    score=adjusted_score,
+                    raw_score=score,
+                    quality_category=quality.category,
+                    quality_weight=quality.weight,
                 )
             )
             source_counts[chunk.source] += 1
-            if len(selected) >= top_k:
+            if len(selected) >= candidate_limit:
                 break
-        return selected
+        if quality_rerank:
+            selected.sort(key=lambda result: (-result.score, -float(result.raw_score or 0.0), result.source))
+        return selected[:top_k]
 
 
 def _best_snippet(text: str, query: str, limit: int) -> str:
@@ -294,5 +384,6 @@ def format_search_results(
         snippet = _best_snippet(result.text, query, per_result_chars)
         snippet = snippet.replace("<search", "＜search").replace("</search>", "＜/search＞")
         heading = f" · {result.heading}" if result.heading else ""
-        blocks.append(f"{index}. 来源：{result.source}{heading}\n相关度：{result.score:.2f}\n{snippet}")
+        display_score = result.raw_score if result.raw_score is not None else result.score
+        blocks.append(f"{index}. 来源：{result.source}{heading}\n相关度：{display_score:.2f}\n{snippet}")
     return "\n\n".join(blocks)[:max_chars]

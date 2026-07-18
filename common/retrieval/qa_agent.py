@@ -47,6 +47,8 @@ class QARetrievalRunner:
         max_searches: int = 2,
         max_invalid_actions: int = 2,
         top_k: int = 3,
+        candidate_k: int | None = None,
+        quality_rerank: bool = False,
         max_result_chars: int = 1800,
         per_result_chars: int = 520,
     ):
@@ -59,6 +61,8 @@ class QARetrievalRunner:
         self.max_searches = max_searches
         self.max_invalid_actions = max_invalid_actions
         self.top_k = top_k
+        self.candidate_k = max(top_k, int(candidate_k or top_k))
+        self.quality_rerank = quality_rerank
         self.max_result_chars = max_result_chars
         self.per_result_chars = per_result_chars
 
@@ -150,7 +154,12 @@ class QARetrievalRunner:
             original_query,
             str(metadata.get("bank", "")),
         )
-        results = self.index.search(retrieval_query, top_k=self.top_k)
+        results = self.index.search(
+            retrieval_query,
+            top_k=self.top_k,
+            candidate_k=self.candidate_k,
+            quality_rerank=self.quality_rerank,
+        )
         rendered = format_search_results(
             results,
             retrieval_query,

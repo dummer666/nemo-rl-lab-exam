@@ -1,4 +1,4 @@
-# Qwen 3.5 9B QA Agent: multi-turn Markdown retrieval + boxed-answer reward.
+# QA Agent v2: BM25 Top-50 candidates with non-destructive document-quality reranking.
 defaults:
   - ../../configs/base/grpo_math_1B.yaml
   - ../../configs/models/qwen3.5-9b.yaml
@@ -9,12 +9,10 @@ policy:
   model_name: "Qwen/Qwen3.5-9B-Base"
   tokenizer:
     name: "Qwen/Qwen3.5-9B-Base"
-  # Initial prompt + two bounded retrieval results + final reasoning.
   max_total_sequence_length: 6144
   train_global_batch_size: 32
   generation_batch_size: 16
   generation:
-    # Search turns stop at </search>; final answers retain enough room to reach \boxed{}.
     max_new_tokens: 1536
     temperature: 1.0
     top_p: 0.95
@@ -33,7 +31,6 @@ policy:
 grpo:
   num_prompts_per_step: 4
   num_generations_per_prompt: 8
-  # At most two searches followed by one final answer.
   max_rollout_turns: 3
   max_num_steps: 120
   val_period: 10
@@ -58,21 +55,28 @@ env:
   qa_retrieval:
     cfg:
       docs_dir: /data/docs
-      top_k: 3
+      top_k: 4
+      candidate_k: 50
+      quality_rerank: true
+      quality_weights:
+        answer-bearing: 1.15
+        reference: 1.0
+        question-only: 0.45
+        noise: 0.1
       chunk_chars: 1200
       chunk_overlap_chars: 160
-      max_result_chars: 1500
-      per_result_chars: 420
+      max_result_chars: 1800
+      per_result_chars: 360
       bm25_k1: 1.5
       bm25_b: 0.75
       max_searches: 2
       max_invalid_actions: 2
-      # Requires a separately launched local judge endpoint; otherwise falls back to keywords.
-      use_judge: true
+      # No judge endpoint is launched by the training job; use deterministic rewards.
+      use_judge: false
 
 logger:
   wandb_enabled: false
   tensorboard_enabled: false
   swanlab_enabled: false
   monitor_gpus: true
-  num_val_samples_to_print: 5
+  num_val_samples_to_print: 10
