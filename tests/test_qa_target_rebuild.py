@@ -4,6 +4,7 @@ import pytest
 
 from common.retrieval.qa_target_rebuild import (
     assign_group_splits,
+    bind_visible_evidence,
     evidence_quote_hits,
     extract_json_object,
     non_text_task_reason,
@@ -192,3 +193,56 @@ def test_group_split_requires_unique_questions_and_is_disjoint():
     duplicate = [*records, {**records[0], "source_row_id": 99}]
     with pytest.raises(ValueError, match="deduplicated"):
         assign_group_splits(duplicate)
+
+
+def test_points_bind_to_the_ranked_source_actually_visible_to_agent():
+    points = [
+        {
+            "index": 1,
+            "statement": "第一项完整事实。",
+            "quote": "第一条连续原文证据",
+            "source": "candidate-copy.md",
+        },
+        {
+            "index": 2,
+            "statement": "第二项完整事实。",
+            "quote": "第二条连续原文证据",
+            "source": "candidate-copy.md",
+        },
+    ]
+    hops = [
+        {
+            "hop": 1,
+            "observation": (
+                "[检索结果]\n第一条连续原文证据\n第二条连续原文证据"
+            ),
+            "top_k_results": [
+                {
+                    "rank": 1,
+                    "source": "visible.md",
+                    "heading": "答案段",
+                    "quality_category": "reference",
+                    "text": "第一条连续原文证据；第二条连续原文证据",
+                }
+            ],
+        }
+    ]
+
+    bound = bind_visible_evidence(points, hops)
+
+    assert bound[0]["source"] == "candidate-copy.md"
+    assert bound[0]["visible_supports"] == [
+        {
+            "hop": 1,
+            "rank": 1,
+            "source": "visible.md",
+            "heading": "答案段",
+            "quality_category": "reference",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="no exact visible source binding"):
+        bind_visible_evidence(
+            [{**points[0], "quote": "未显示的原文证据"}],
+            hops,
+        )

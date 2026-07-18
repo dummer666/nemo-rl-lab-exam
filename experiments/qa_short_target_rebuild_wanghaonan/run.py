@@ -43,6 +43,7 @@ from common.retrieval.qa_sft import (  # noqa: E402
 )
 from common.retrieval.qa_target_rebuild import (  # noqa: E402
     assign_group_splits,
+    bind_visible_evidence,
     evidence_quote_hits,
     extract_json_object,
     non_text_task_reason,
@@ -568,7 +569,13 @@ def _build_manifest_record(
     *,
     max_tokens: int,
 ) -> tuple[dict[str, Any] | None, str]:
-    points = list(row["answer_points"])
+    try:
+        points = bind_visible_evidence(
+            row["answer_points"],
+            row["search_hops"],
+        )
+    except ValueError:
+        return None, "missing_visible_source_binding"
     expected = rebuilt_expected_answer(points)
     messages = build_search_messages(
         query=str(row["query"]),
@@ -845,7 +852,7 @@ def main() -> None:
         selected = min(
             attempts,
             key=lambda attempt: (
-                -len(
+                len(
                     {
                         point["evidence_id"]
                         for point in attempt["points"]

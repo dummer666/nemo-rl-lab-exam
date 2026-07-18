@@ -258,6 +258,43 @@ def rebuilt_expected_answer(points: Sequence[Mapping[str, Any]]) -> str:
     return "[short] " + " ||| ".join(statements)
 
 
+def bind_visible_evidence(
+    points: Sequence[Mapping[str, Any]],
+    search_hops: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Bind each point to the exact ranked result the agent actually saw."""
+    bound = []
+    for point in points:
+        quote = str(point.get("quote", ""))
+        supports = []
+        for hop in search_hops:
+            observation = str(hop.get("observation", ""))
+            if not quote or quote not in observation:
+                continue
+            for result in hop.get("top_k_results", []):
+                if not isinstance(result, Mapping):
+                    continue
+                if quote not in str(result.get("text", "")):
+                    continue
+                supports.append(
+                    {
+                        "hop": int(hop["hop"]),
+                        "rank": int(result["rank"]),
+                        "source": str(result.get("source", "")),
+                        "heading": str(result.get("heading", "")),
+                        "quality_category": str(
+                            result.get("quality_category", "")
+                        ),
+                    }
+                )
+        if not supports:
+            raise ValueError(
+                f"point {point.get('index')} has no exact visible source binding"
+            )
+        bound.append({**dict(point), "visible_supports": supports})
+    return bound
+
+
 def assign_group_splits(
     records: Sequence[Mapping[str, Any]],
     *,
