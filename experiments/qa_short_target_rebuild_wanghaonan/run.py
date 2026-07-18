@@ -479,6 +479,7 @@ def _evidence_records(
                 "source": result.source,
                 "heading": result.heading,
                 "quality_category": result.quality_category,
+                "score": result.score,
                 "raw_score": result.raw_score,
                 "text": snippet,
             }

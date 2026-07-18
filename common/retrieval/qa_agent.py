@@ -8,7 +8,7 @@ from typing import Callable, TypedDict
 from common.retrieval.evidence import (
     expected_keypoints,
     normalize_evidence_text,
-    text_keypoint_hits,
+    visible_evidence_keypoint_hits,
 )
 from common.retrieval.markdown_bm25 import (
     MarkdownBM25Index,
@@ -229,10 +229,11 @@ class QARetrievalRunner:
         previous_hits = {
             int(hit) for hit in metadata.get("evidence_hits", []) if isinstance(hit, int) and 0 <= hit < len(keypoints)
         }
-        current_hits: set[int] = set()
-        for result, snippet in zip(results, visible_snippets, strict=True):
-            if result.quality_category not in {"question-only", "noise"}:
-                current_hits.update(text_keypoint_hits(snippet, keypoints))
+        current_hits = visible_evidence_keypoint_hits(
+            results,
+            visible_snippets,
+            keypoints,
+        )
         cumulative_hits = previous_hits | current_hits
         if keypoints:
             coverage_delta = (len(cumulative_hits) - len(previous_hits)) / len(keypoints)

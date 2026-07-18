@@ -81,3 +81,16 @@ def evidence_keypoint_hits(
         "\n".join(result.text for result in searchable),
         keypoints,
     )
+
+
+def visible_evidence_keypoint_hits(
+    results: Sequence[SearchResult],
+    visible_snippets: Sequence[str],
+    keypoints: Sequence[Sequence[str]],
+) -> set[int]:
+    """Return keypoint hits visible within the same trusted ranked result."""
+    hits: set[int] = set()
+    for result, snippet in zip(results, visible_snippets, strict=True):
+        if result.quality_category not in {"question-only", "noise"}:
+            hits.update(text_keypoint_hits(snippet, keypoints))
+    return hits
