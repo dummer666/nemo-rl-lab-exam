@@ -17,6 +17,10 @@ grpo:
   num_generations_per_prompt: 1
   max_num_steps: 1
 
+data:
+  train:
+    dataset_name: "nvidia/OpenMathInstruct-2"
+
 logger:
   wandb_enabled: false
   tensorboard_enabled: false
