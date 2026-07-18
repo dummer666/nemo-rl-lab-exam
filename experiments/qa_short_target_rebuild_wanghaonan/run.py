@@ -60,7 +60,7 @@ DEFAULT_CLEAN_TRAIN_PATH = (
 )
 DEFAULT_AUDIT_DIR = (
     "/shared/outputs/wanghaonan/qa_short_gold_audit_wanghaonan/"
-    "qa_short_gold_audit_wanghaonan-wanghaonan-20260718-164635/"
+    "qa_short_gold_audit_wanghaonan-wanghaonan-20260718-174624/"
     "short_gold_audit"
 )
 MODEL_NAME = "Qwen/Qwen3.5-9B"
