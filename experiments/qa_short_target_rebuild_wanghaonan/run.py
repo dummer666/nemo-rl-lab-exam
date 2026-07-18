@@ -264,6 +264,29 @@ def _load_teacher():
     return tokenizer, model
 
 
+def _assert_gpu_capacity() -> None:
+    import torch
+
+    minimum_free_gib = float(
+        os.environ.get("QA_REBUILD_MIN_FREE_GPU_GIB", "48")
+    )
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    gib = 1024**3
+    free_gib = free_bytes / gib
+    total_gib = total_bytes / gib
+    print(
+        f"[short-rebuild] gpu_memory free={free_gib:.2f} GiB "
+        f"total={total_gib:.2f} GiB required={minimum_free_gib:.2f} GiB",
+        flush=True,
+    )
+    if free_gib < minimum_free_gib:
+        raise RuntimeError(
+            "shared H200 is already occupied: "
+            f"free={free_gib:.2f} GiB < required={minimum_free_gib:.2f} GiB; "
+            "retry unchanged configuration after the competing process exits"
+        )
+
+
 def _row_id(row: Mapping[str, Any]) -> int:
     clean = row.get("_clean")
     if not isinstance(clean, Mapping) or clean.get("row_id") is None:
@@ -703,6 +726,7 @@ def main() -> None:
             }
         )
 
+    _assert_gpu_capacity()
     load_start = time.perf_counter()
     tokenizer, model = _load_teacher()
     model_load_seconds = time.perf_counter() - load_start
