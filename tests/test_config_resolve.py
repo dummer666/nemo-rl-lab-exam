@@ -1,4 +1,5 @@
 """config 解析（defaults 继承 + _override_）与提交前校验的单元测试。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,9 +26,7 @@ def test_deep_merge_override_marker_replaces_section():
 
 def test_resolve_inherits_defaults(tmp_path: Path):
     (tmp_path / "base.yaml").write_text("grpo:\n  num_prompts_per_step: 4\n  val_period: 10\n")
-    (tmp_path / "child.yaml").write_text(
-        "defaults:\n  - base.yaml\ngrpo:\n  num_generations_per_prompt: 4\n"
-    )
+    (tmp_path / "child.yaml").write_text("defaults:\n  - base.yaml\ngrpo:\n  num_generations_per_prompt: 4\n")
     cfg = resolve(tmp_path / "child.yaml")
     assert cfg["grpo"]["num_prompts_per_step"] == 4  # 来自 base
     assert cfg["grpo"]["num_generations_per_prompt"] == 4  # 来自 child
@@ -88,6 +87,7 @@ def test_validate_skips_interpolated_values():
     [
         "grpo_qwen3.5-9b_gsm8k_v1",
         "agent-grpo_qwen3.5-9b_sliding-puzzle_v1",
+        "grpo_qwen3.5-9b_qa-rl-agent_wanghaonan",
     ],
 )
 def test_real_experiments_validate_clean(exp):
