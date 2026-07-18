@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from common.retrieval.evidence import normalize_evidence_text
-from common.retrieval.markdown_bm25 import question_context, tokenize
+from common.retrieval.markdown_bm25 import SearchResult, question_context, tokenize
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _ENTITY = re.compile(
@@ -251,6 +251,19 @@ def evidence_quote_hits(text: str, points: Sequence[Mapping[str, Any]]) -> set[i
     }
 
 
+def trusted_visible_quote_hits(
+    results: Sequence[SearchResult],
+    visible_snippets: Sequence[str],
+    points: Sequence[Mapping[str, Any]],
+) -> set[int]:
+    """Return quote hits visible within the same trusted ranked result."""
+    hits: set[int] = set()
+    for result, snippet in zip(results, visible_snippets, strict=True):
+        if result.quality_category not in {"question-only", "noise"}:
+            hits.update(evidence_quote_hits(snippet, points))
+    return hits
+
+
 def rebuilt_expected_answer(points: Sequence[Mapping[str, Any]]) -> str:
     statements = [str(point["statement"]).strip() for point in points]
     if not 2 <= len(statements) <= 6 or any(not statement for statement in statements):
@@ -273,6 +286,8 @@ def bind_visible_evidence(
                 continue
             for result in hop.get("top_k_results", []):
                 if not isinstance(result, Mapping):
+                    continue
+                if result.get("quality_category") in {"question-only", "noise"}:
                     continue
                 if quote not in str(result.get("text", "")):
                     continue

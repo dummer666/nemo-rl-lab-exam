@@ -30,7 +30,7 @@ from common.retrieval.markdown_bm25 import (  # noqa: E402
     SearchResult,
     best_snippet,
     build_retrieval_query,
-    format_search_results,
+    format_search_results_with_visible_snippets,
     question_context,
 )
 from common.retrieval.qa_sft import (  # noqa: E402
@@ -44,11 +44,11 @@ from common.retrieval.qa_sft import (  # noqa: E402
 from common.retrieval.qa_target_rebuild import (  # noqa: E402
     assign_group_splits,
     bind_visible_evidence,
-    evidence_quote_hits,
     extract_json_object,
     non_text_task_reason,
     question_fingerprint,
     rebuilt_expected_answer,
+    trusted_visible_quote_hits,
     validate_generated_target,
     verifier_accepts,
 )
@@ -536,7 +536,7 @@ def _rewrite_prompt(row: Mapping[str, Any]) -> str:
 
 def _result_records(
     results: Sequence[SearchResult],
-    retrieval_query: str,
+    visible_snippets: Sequence[str],
 ) -> list[dict[str, Any]]:
     return [
         {
@@ -545,9 +545,12 @@ def _result_records(
             "heading": result.heading,
             "quality_category": result.quality_category,
             "raw_score": result.raw_score,
-            "text": best_snippet(result.text, retrieval_query, 360),
+            "text": snippet,
         }
-        for rank, result in enumerate(results, start=1)
+        for rank, (result, snippet) in enumerate(
+            zip(results, visible_snippets, strict=True),
+            start=1,
+        )
     ]
 
 
@@ -891,21 +894,22 @@ def main() -> None:
             bank=str(row["bank"]),
             top_k=4,
         )
-        observation = format_search_results(
+        observation, visible_snippets = format_search_results_with_visible_snippets(
             results,
             retrieval_query,
             max_chars=1800,
             per_result_chars=360,
         )
-        first_hits = evidence_quote_hits(
-            visible_retrieval_text(observation),
+        first_hits = trusted_visible_quote_hits(
+            results,
+            visible_snippets,
             row["answer_points"],
         )
         first_hop = {
             "hop": 1,
             "model_search_query": first_query,
             "retrieval_query": retrieval_query,
-            "top_k_results": _result_records(results, retrieval_query),
+            "top_k_results": _result_records(results, visible_snippets),
             "observation": observation,
             "answer_point_hit_indexes": sorted(first_hits),
             "new_answer_point_hit_indexes": sorted(first_hits),
@@ -989,14 +993,15 @@ def main() -> None:
                     bank=str(row["bank"]),
                     top_k=4,
                 )
-                observation = format_search_results(
+                observation, visible_snippets = format_search_results_with_visible_snippets(
                     results,
                     retrieval_query,
                     max_chars=1800,
                     per_result_chars=360,
                 )
-                second_hits = evidence_quote_hits(
-                    visible_retrieval_text(observation),
+                second_hits = trusted_visible_quote_hits(
+                    results,
+                    visible_snippets,
                     row["answer_points"],
                 )
                 first_hits = set(int(hit) for hit in row["first_hits"])
@@ -1013,6 +1018,7 @@ def main() -> None:
                         "retrieval_query": retrieval_query,
                         "results": results,
                         "observation": observation,
+                        "visible_snippets": visible_snippets,
                         "second_hits": sorted(second_hits),
                         "new_hits": sorted(new_hits),
                         "cumulative_hits": sorted(cumulative_hits),
@@ -1066,7 +1072,7 @@ def main() -> None:
             "retrieval_query": selected["retrieval_query"],
             "top_k_results": _result_records(
                 selected["results"],
-                selected["retrieval_query"],
+                selected["visible_snippets"],
             ),
             "observation": selected["observation"],
             "answer_point_hit_indexes": selected["second_hits"],

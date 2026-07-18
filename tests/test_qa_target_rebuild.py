@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from common.retrieval.markdown_bm25 import SearchResult
 from common.retrieval.qa_target_rebuild import (
     assign_group_splits,
     bind_visible_evidence,
@@ -9,6 +10,7 @@ from common.retrieval.qa_target_rebuild import (
     extract_json_object,
     non_text_task_reason,
     rebuilt_expected_answer,
+    trusted_visible_quote_hits,
     validate_generated_target,
     verifier_accepts,
 )
@@ -155,6 +157,37 @@ def test_verifier_and_visible_quote_gates_are_strict():
     ) == {0}
 
 
+def test_quote_hits_require_same_visible_trusted_result():
+    points = [{"index": 1, "quote": "第一条连续证据文本"}]
+    results = [
+        SearchResult(
+            source="questions.md",
+            heading="考试题",
+            text="第一条连续证据文本",
+            score=2.0,
+            quality_category="question-only",
+        ),
+        SearchResult(
+            source="reference.md",
+            heading="参考资料",
+            text="第一条连续证据文本",
+            score=1.0,
+            quality_category="reference",
+        ),
+    ]
+
+    assert trusted_visible_quote_hits(
+        results,
+        ["第一条连续证据文本", ""],
+        points,
+    ) == set()
+    assert trusted_visible_quote_hits(
+        results,
+        ["第一条连续证据文本", "第一条连续证据文本"],
+        points,
+    ) == {0}
+
+
 def test_json_parser_and_non_text_filters_do_not_fallback_to_dirty_targets():
     assert extract_json_object('说明\n```json\n{"decision":"reject"}\n```') == {
         "decision": "reject"
@@ -246,3 +279,17 @@ def test_points_bind_to_the_ranked_source_actually_visible_to_agent():
             [{**points[0], "quote": "未显示的原文证据"}],
             hops,
         )
+
+    untrusted_hops = [
+        {
+            **hops[0],
+            "top_k_results": [
+                {
+                    **hops[0]["top_k_results"][0],
+                    "quality_category": "question-only",
+                }
+            ],
+        }
+    ]
+    with pytest.raises(ValueError, match="no exact visible source binding"):
+        bind_visible_evidence(points, untrusted_hops)
