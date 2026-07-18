@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 MODEL_NAME = "Qwen/Qwen3.5-9B"
+PASSTHROUGH_CHAT_TEMPLATE = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
 TRAIN_PATH = Path(
     "/shared/outputs/wanghaonan/qa_sft_trajectory_build_wanghaonan/"
     "qa_sft_trajectory_build_wanghaonan-wanghaonan-20260718-123640/"
@@ -45,7 +46,7 @@ def _run_sft_preflight() -> None:
     tokenizer = get_tokenizer(
         {
             "name": MODEL_NAME,
-            "chat_template": None,
+            "chat_template": PASSTHROUGH_CHAT_TEMPLATE,
             "chat_template_kwargs": None,
         }
     )

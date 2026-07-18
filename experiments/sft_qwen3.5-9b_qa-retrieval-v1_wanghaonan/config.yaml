@@ -11,13 +11,23 @@ policy:
     name: "Qwen/Qwen3.5-9B"
     # The first user message is already rendered with the Qwen chat template.
     # Later assistant/environment chunks must be concatenated without wrappers.
-    chat_template: null
+    chat_template: "{% for message in messages %}{{ message['content'] }}{% endfor %}"
     chat_template_kwargs: null
   train_global_batch_size: 8
   train_micro_batch_size: 1
   max_total_sequence_length: 3072
   sequence_packing:
     enabled: false
+  # SFT does not create a generation worker. These fields complete the policy
+  # schema after the shared H200 profile injects vLLM memory settings.
+  generation:
+    backend: "vllm"
+    max_new_tokens: 1
+    temperature: 1.0
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: null
+    stop_strings: null
   megatron_cfg:
     peft:
       enabled: true
