@@ -1,0 +1,84 @@
+# Evidence-grounded retrieval SFT on the Qwen3.5-9B Instruct model.
+defaults:
+  - ../../configs/base/sft.yaml
+  - ../../configs/models/qwen3.5-9b.yaml
+  - ../../configs/base/grpo_megatron.yaml
+  - ../../configs/base/grpo_lora.yaml
+
+policy:
+  model_name: "Qwen/Qwen3.5-9B"
+  tokenizer:
+    name: "Qwen/Qwen3.5-9B"
+    # The first user message is already rendered with the Qwen chat template.
+    # Later assistant/environment chunks must be concatenated without wrappers.
+    chat_template: null
+    chat_template_kwargs: null
+  train_global_batch_size: 8
+  train_micro_batch_size: 1
+  max_total_sequence_length: 3072
+  sequence_packing:
+    enabled: false
+  megatron_cfg:
+    peft:
+      enabled: true
+      target_modules: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+      dim: 16
+      alpha: 32
+      dropout: 0.0
+      lora_dtype: "bfloat16"
+    optimizer:
+      lr: 2.0e-5
+      min_lr: 2.0e-6
+      weight_decay: 0.0
+    scheduler:
+      lr_decay_style: "cosine"
+      lr_warmup_iters: 5
+      lr_decay_iters: 50
+
+sft:
+  max_num_epochs: 2
+  max_num_steps: 60
+  val_period: 25
+  val_batches: 4
+  val_global_batch_size: 8
+  val_micro_batch_size: 1
+  val_at_start: true
+  val_at_end: true
+  seed: 42
+  only_unmask_final: false
+
+checkpointing:
+  metric_name: "val:val_loss"
+  higher_is_better: false
+  keep_top_k: 3
+  save_period: 25
+  save_optimizer: true
+
+data:
+  add_bos: false
+  add_eos: true
+  add_generation_prompt: false
+  shuffle: true
+  num_workers: 1
+  train:
+    dataset_name: openai_format
+    data_path: /shared/outputs/wanghaonan/qa_sft_trajectory_build_wanghaonan/qa_sft_trajectory_build_wanghaonan-wanghaonan-20260718-123640/sft_trajectories/sft_train.jsonl
+    chat_key: messages
+    system_key: null
+    system_prompt: null
+    tool_key: null
+    use_preserving_dataset: true
+  validation:
+    dataset_name: openai_format
+    data_path: /shared/outputs/wanghaonan/qa_sft_trajectory_build_wanghaonan/qa_sft_trajectory_build_wanghaonan-wanghaonan-20260718-123640/sft_trajectories/sft_validation.jsonl
+    chat_key: messages
+    system_key: null
+    system_prompt: null
+    tool_key: null
+    use_preserving_dataset: true
+
+logger:
+  wandb_enabled: false
+  tensorboard_enabled: false
+  swanlab_enabled: false
+  monitor_gpus: true
