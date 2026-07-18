@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Sequence
@@ -45,14 +44,12 @@ def _prepare_output(path: Path) -> bool:
 def _export_step(nemo_rl_dir: Path, step: int) -> dict:
     step_dir = SFT_ROOT / f"step_{step}"
     adapter_checkpoint = step_dir / "policy" / "weights" / "iter_0000000"
-    tokenizer_dir = step_dir / "policy" / "tokenizer"
     output_dir = SFT_ROOT / "hf_export" / f"step_{step}"
 
     required = [
         BASE_CHECKPOINT,
         adapter_checkpoint,
         adapter_checkpoint / "run_config.yaml",
-        tokenizer_dir,
         nemo_rl_dir / "examples" / "converters" / "convert_lora_to_hf.py",
     ]
     missing = [str(path) for path in required if not path.exists()]
@@ -81,7 +78,16 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
         ]
         print(f"[sft-export] step={step} command={' '.join(command)}", flush=True)
         subprocess.run(command, cwd=nemo_rl_dir, check=True)
-        shutil.copytree(tokenizer_dir, output_dir, dirs_exist_ok=True)
+
+    if not (output_dir / "tokenizer_config.json").is_file():
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            MODEL_NAME,
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+        tokenizer.save_pretrained(output_dir)
 
     weights = _weight_files(output_dir)
     if not (output_dir / "config.json").is_file() or not weights:
