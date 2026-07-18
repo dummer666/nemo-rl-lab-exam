@@ -61,7 +61,7 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
         output_dir.parent.mkdir(parents=True, exist_ok=True)
         bridge_root = nemo_rl_dir / "3rdparty" / "Megatron-Bridge-workspace" / "Megatron-Bridge"
         megatron_core_root = bridge_root / "3rdparty" / "Megatron-LM"
-        mcore_roots = [bridge_root, megatron_core_root]
+        mcore_roots = [bridge_root / "src", megatron_core_root]
         missing_roots = [str(path) for path in mcore_roots if not path.is_dir()]
         if missing_roots:
             raise FileNotFoundError(f"Missing Megatron source roots: {missing_roots}")
