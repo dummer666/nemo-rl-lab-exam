@@ -21,7 +21,12 @@ QA_AUDIT_CANDIDATE_K=50
 QA_AUDIT_MAX_ROWS=0
 QA_AUDIT_SEMANTIC=1
 QA_SEMANTIC_MODEL=intfloat/multilingual-e5-small
+QA_SEMANTIC_LOCAL_ONLY=1
 ```
+
+The cluster disables outbound Hugging Face traffic. If the requested encoder is
+not cached, the audit records the error and available cache names, then still
+completes the BM25 and quality-reranking comparison.
 
 Run through the normal cluster service:
 

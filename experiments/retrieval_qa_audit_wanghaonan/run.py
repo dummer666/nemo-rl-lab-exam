@@ -106,6 +106,22 @@ def _output_path(overrides: Sequence[str]) -> Path:
     return THIS_DIR / "retrieval_audit.json"
 
 
+def _cached_huggingface_models() -> list[str]:
+    roots = [Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"]
+    roots.extend(
+        Path(value)
+        for name in ("HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE")
+        if (value := os.environ.get(name))
+    )
+    models = set()
+    for root in roots:
+        if not str(root) or not root.is_dir():
+            continue
+        for path in root.glob("models--*"):
+            models.add(path.name.removeprefix("models--").replace("--", "/"))
+    return sorted(models)
+
+
 def main() -> None:
     _, overrides = _parse_args()
     docs_dir = Path(os.environ.get("QA_DOCS_DIR", "/data/docs"))
@@ -113,6 +129,7 @@ def main() -> None:
     candidate_k = int(os.environ.get("QA_AUDIT_CANDIDATE_K", "50"))
     max_rows = int(os.environ.get("QA_AUDIT_MAX_ROWS", "0"))
     semantic_enabled = os.environ.get("QA_AUDIT_SEMANTIC", "1") != "0"
+    semantic_local_only = os.environ.get("QA_SEMANTIC_LOCAL_ONLY", "1") != "0"
     semantic_model = os.environ.get(
         "QA_SEMANTIC_MODEL",
         "intfloat/multilingual-e5-small",
@@ -133,14 +150,21 @@ def main() -> None:
 
     model_load_seconds = 0.0
     reranker = None
+    semantic_error = None
+    cached_models = _cached_huggingface_models()
     if semantic_enabled:
         model_start = time.perf_counter()
-        reranker = TransformerSemanticReranker(
-            semantic_model,
-            device="auto",
-            batch_size=64,
-            max_length=512,
-        )
+        try:
+            reranker = TransformerSemanticReranker(
+                semantic_model,
+                device="auto",
+                batch_size=64,
+                max_length=512,
+                local_files_only=semantic_local_only,
+            )
+        except OSError as exc:
+            semantic_error = f"{type(exc).__name__}: {exc}"
+            print(f"[retrieval-audit] semantic model unavailable: {semantic_error}")
         model_load_seconds = time.perf_counter() - model_start
 
     stats: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -236,8 +260,11 @@ def main() -> None:
         "open_answer_rows": open_rows,
         "question_type_counts": dict(sorted(type_counts.items())),
         "candidate_k": candidate_k,
-        "semantic_enabled": semantic_enabled,
+        "semantic_requested": semantic_enabled,
+        "semantic_available": reranker is not None,
         "semantic_model": semantic_model if semantic_enabled else None,
+        "semantic_error": semantic_error,
+        "cached_huggingface_models": cached_models,
         "timing_seconds": {
             "index_build": index_seconds,
             "semantic_model_load": model_load_seconds,

@@ -73,6 +73,7 @@ class TransformerSemanticReranker:
         max_length: int = 512,
         query_prefix: str = "query: ",
         passage_prefix: str = "passage: ",
+        local_files_only: bool = True,
     ):
         try:
             import torch
@@ -94,8 +95,18 @@ class TransformerSemanticReranker:
         self.max_length = max_length
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).eval().to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+        )
+        self.model = (
+            AutoModel.from_pretrained(
+                model_name,
+                local_files_only=local_files_only,
+            )
+            .eval()
+            .to(self.device)
+        )
         if self.device.startswith("cuda"):
             self.model = self.model.half()
 
