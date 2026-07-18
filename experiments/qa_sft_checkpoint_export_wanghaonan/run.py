@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -58,13 +59,20 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
 
     if _prepare_output(output_dir):
         output_dir.parent.mkdir(parents=True, exist_ok=True)
+        bridge_root = nemo_rl_dir / "3rdparty" / "Megatron-Bridge-workspace" / "Megatron-Bridge"
+        megatron_core_root = bridge_root / "3rdparty" / "Megatron-LM"
+        mcore_roots = [bridge_root, megatron_core_root]
+        missing_roots = [str(path) for path in mcore_roots if not path.is_dir()]
+        if missing_roots:
+            raise FileNotFoundError(f"Missing Megatron source roots: {missing_roots}")
+
+        converter_env = os.environ.copy()
+        python_path_parts = [str(path) for path in mcore_roots]
+        if converter_env.get("PYTHONPATH"):
+            python_path_parts.append(converter_env["PYTHONPATH"])
+        converter_env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
         command = [
-            "uv",
-            "run",
-            "--no-sync",
-            "--extra",
-            "mcore",
-            "python",
+            sys.executable,
             "-u",
             "examples/converters/convert_lora_to_hf.py",
             "--base-ckpt",
@@ -84,6 +92,7 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
             stderr=subprocess.STDOUT,
             text=True,
             check=False,
+            env=converter_env,
         )
         if completed.stdout:
             print(completed.stdout, end="", flush=True)
