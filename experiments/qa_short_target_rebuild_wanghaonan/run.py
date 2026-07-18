@@ -683,6 +683,7 @@ def main() -> None:
         flush=True,
     )
 
+    _assert_gpu_capacity()
     index_start = time.perf_counter()
     index = MarkdownBM25Index.from_directory(
         docs_dir,
