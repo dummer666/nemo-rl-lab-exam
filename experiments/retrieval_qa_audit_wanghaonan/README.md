@@ -22,6 +22,8 @@ QA_AUDIT_MAX_ROWS=0
 QA_AUDIT_SEMANTIC=1
 QA_SEMANTIC_MODEL=intfloat/multilingual-e5-small
 QA_SEMANTIC_LOCAL_ONLY=1
+QA_SEMANTIC_BATCH_SIZE=64
+QA_SEMANTIC_MAX_LENGTH=512
 ```
 
 The cluster disables outbound Hugging Face traffic. If the requested encoder is

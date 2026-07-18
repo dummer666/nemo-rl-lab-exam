@@ -99,16 +99,20 @@ class TransformerSemanticReranker:
             model_name,
             local_files_only=local_files_only,
         )
+        model_kwargs = {
+            "local_files_only": local_files_only,
+            "low_cpu_mem_usage": True,
+        }
+        if self.device.startswith("cuda"):
+            model_kwargs["torch_dtype"] = torch.float16
         self.model = (
             AutoModel.from_pretrained(
                 model_name,
-                local_files_only=local_files_only,
+                **model_kwargs,
             )
             .eval()
             .to(self.device)
         )
-        if self.device.startswith("cuda"):
-            self.model = self.model.half()
 
     def _encode(self, texts: Sequence[str]) -> list[list[float]]:
         torch = self._torch

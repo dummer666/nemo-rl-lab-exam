@@ -134,6 +134,10 @@ def main() -> None:
         "QA_SEMANTIC_MODEL",
         "intfloat/multilingual-e5-small",
     )
+    semantic_batch_size = int(os.environ.get("QA_SEMANTIC_BATCH_SIZE", "64"))
+    semantic_max_length = int(os.environ.get("QA_SEMANTIC_MAX_LENGTH", "512"))
+    semantic_query_prefix = os.environ.get("QA_SEMANTIC_QUERY_PREFIX", "query: ")
+    semantic_passage_prefix = os.environ.get("QA_SEMANTIC_PASSAGE_PREFIX", "passage: ")
 
     index_start = time.perf_counter()
     index = MarkdownBM25Index.from_directory(
@@ -158,8 +162,10 @@ def main() -> None:
             reranker = TransformerSemanticReranker(
                 semantic_model,
                 device="auto",
-                batch_size=64,
-                max_length=512,
+                batch_size=semantic_batch_size,
+                max_length=semantic_max_length,
+                query_prefix=semantic_query_prefix,
+                passage_prefix=semantic_passage_prefix,
                 local_files_only=semantic_local_only,
             )
         except OSError as exc:
@@ -263,6 +269,8 @@ def main() -> None:
         "semantic_requested": semantic_enabled,
         "semantic_available": reranker is not None,
         "semantic_model": semantic_model if semantic_enabled else None,
+        "semantic_batch_size": semantic_batch_size,
+        "semantic_max_length": semantic_max_length,
         "semantic_error": semantic_error,
         "cached_huggingface_models": cached_models,
         "timing_seconds": {
