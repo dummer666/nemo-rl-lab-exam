@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_REBUILD_DIR = Path(
-    "/shared/outputs/wanghaonan/qa_short_target_rebuild_smoke_wanghaonan/"
-    "qa_short_target_rebuild_smoke_wanghaonan-wanghaonan-20260718-172045/"
+    "/shared/outputs/wanghaonan/qa_short_target_rebuild_wanghaonan/"
+    "qa_short_target_rebuild_wanghaonan-wanghaonan-20260718-184512/"
     "short_target_rebuild"
 )
 
@@ -159,10 +159,52 @@ def _build_report(
         )
         if len(rejection_examples) >= 10:
             break
+    generation_counts = Counter(
+        str(row.get("deterministic_decision"))
+        for row in generation_rows
+    )
+    verifier_counts = Counter(
+        "accepted" if row.get("verifier_accept") is True else "rejected"
+        for row in generation_rows
+        if row.get("deterministic_decision") == "accepted"
+    )
+    generation_examples = []
+    seen_generation_decisions = set()
+    for row in generation_rows:
+        decision = str(row.get("deterministic_decision"))
+        verifier_rejected = (
+            decision == "accepted"
+            and row.get("verifier_accept") is not True
+        )
+        example_key = (
+            "verifier_rejected"
+            if verifier_rejected
+            else decision
+        )
+        if example_key in seen_generation_decisions:
+            continue
+        seen_generation_decisions.add(example_key)
+        generation_examples.append(
+            {
+                "source_row_id": row.get("source_row_id"),
+                "candidate_index": row.get("candidate_index"),
+                "query": row.get("query"),
+                "deterministic_decision": decision,
+                "points": row.get("points"),
+                "verifier_accept": row.get("verifier_accept"),
+                "raw_generation": str(row.get("raw_generation", ""))[:2000],
+                "verifier_raw": str(row.get("verifier_raw", ""))[:2000],
+            }
+        )
+        if len(generation_examples) >= 15:
+            break
     return {
         "source_summary": dict(summary),
         "accepted_target_count": len(accepted),
         "accepted_targets": accepted,
+        "generation_decision_counts": dict(sorted(generation_counts.items())),
+        "independent_verifier_counts": dict(sorted(verifier_counts.items())),
+        "representative_generation_failures": generation_examples,
         "rejection_counts": dict(sorted(rejection_counts.items())),
         "representative_rejections": rejection_examples,
     }

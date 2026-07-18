@@ -58,6 +58,7 @@ def test_review_report_requires_visible_quotes_and_complete_final_answer():
             {
                 "source_row_id": 7,
                 "candidate_index": 1,
+                "deterministic_decision": "accepted",
                 "verifier_accept": True,
             }
         ],
@@ -69,6 +70,8 @@ def test_review_report_requires_visible_quotes_and_complete_final_answer():
     accepted = report["accepted_targets"][0]
     assert accepted["human_review_checklist"]["decision"] == "pending_human_review"
     assert accepted["teacher_and_verifier_attempts"][0]["verifier_accept"]
+    assert report["generation_decision_counts"] == {"accepted": 1}
+    assert report["independent_verifier_counts"] == {"accepted": 1}
 
     broken = _target()
     broken["search_hops"][0]["observation"] = "[检索结果]\n无关文本"
