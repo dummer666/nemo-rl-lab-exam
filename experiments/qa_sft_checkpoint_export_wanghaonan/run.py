@@ -15,6 +15,9 @@ SFT_ROOT = Path(
     "/shared/outputs/wanghaonan/sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan/"
     "sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan-wanghaonan-20260718-130828"
 )
+MCORE_WORKER_PYTHON = Path(
+    "/opt/ray_venvs/nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker/bin/python"
+)
 STEPS = (25, 50)
 
 
@@ -64,6 +67,8 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
         missing_roots = [str(path) for path in mcore_roots if not path.is_dir()]
         if missing_roots:
             raise FileNotFoundError(f"Missing Megatron source roots: {missing_roots}")
+        if not MCORE_WORKER_PYTHON.is_file():
+            raise FileNotFoundError(f"Missing prebuilt mcore worker Python: {MCORE_WORKER_PYTHON}")
 
         converter_env = os.environ.copy()
         python_path_parts = [str(path) for path in mcore_roots]
@@ -71,11 +76,7 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
             python_path_parts.append(converter_env["PYTHONPATH"])
         converter_env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
         command = [
-            "uv",
-            "run",
-            "--extra",
-            "mcore",
-            "python",
+            str(MCORE_WORKER_PYTHON),
             "-u",
             "examples/converters/convert_lora_to_hf.py",
             "--base-ckpt",
