@@ -77,7 +77,17 @@ def _export_step(nemo_rl_dir: Path, step: int) -> dict:
             str(output_dir),
         ]
         print(f"[sft-export] step={step} command={' '.join(command)}", flush=True)
-        subprocess.run(command, cwd=nemo_rl_dir, check=True)
+        completed = subprocess.run(
+            command,
+            cwd=nemo_rl_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if completed.stdout:
+            print(completed.stdout, end="", flush=True)
+        completed.check_returncode()
 
     if not (output_dir / "tokenizer_config.json").is_file():
         from transformers import AutoTokenizer
