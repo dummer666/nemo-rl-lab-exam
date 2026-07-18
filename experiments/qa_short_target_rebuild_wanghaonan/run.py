@@ -270,7 +270,13 @@ def _assert_gpu_capacity() -> None:
     minimum_free_gib = float(
         os.environ.get("QA_REBUILD_MIN_FREE_GPU_GIB", "48")
     )
-    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    try:
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "shared H200 cannot initialize a CUDA context because competing "
+            "processes exhausted device memory; retry unchanged after release"
+        ) from exc
     gib = 1024**3
     free_gib = free_bytes / gib
     total_gib = total_bytes / gib

@@ -1,0 +1,206 @@
+#!/usr/bin/env python
+"""Render complete human-review records from a successful rebuild smoke."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+DEFAULT_REBUILD_DIR = Path(
+    "/shared/outputs/wanghaonan/qa_short_target_rebuild_smoke_wanghaonan/"
+    "qa_short_target_rebuild_smoke_wanghaonan-wanghaonan-20260718-172045/"
+    "short_target_rebuild"
+)
+
+
+def _parse_args() -> tuple[argparse.Namespace, list[str]]:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config")
+    return parser.parse_known_args()
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path}: expected an object")
+    return value
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows = []
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ValueError(f"{path}:{line_number}: expected an object")
+            rows.append(value)
+    return rows
+
+
+def _output_dir(overrides: Sequence[str]) -> Path:
+    for override in overrides:
+        if override.startswith("logger.log_dir="):
+            output = Path(override.split("=", 1)[1]).parent / "short_target_review"
+            output.mkdir(parents=True, exist_ok=True)
+            return output
+    output = Path(__file__).resolve().parent / "outputs"
+    output.mkdir(parents=True, exist_ok=True)
+    return output
+
+
+def _assert_visible_quotes(target: Mapping[str, Any]) -> None:
+    observations = "\n".join(
+        str(hop.get("observation", ""))
+        for hop in target.get("search_hops", [])
+    )
+    for point in target.get("answer_points", []):
+        quote = str(point.get("quote", ""))
+        if not quote or quote not in observations:
+            raise ValueError(
+                f"row {target.get('source_row_id')}: quote is not visible: {quote!r}"
+            )
+
+
+def _selected_generation_attempts(
+    target: Mapping[str, Any],
+    generation_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    source_row_id = int(target["source_row_id"])
+    return [
+        dict(row)
+        for row in generation_rows
+        if int(row["source_row_id"]) == source_row_id
+    ]
+
+
+def _build_report(
+    summary: Mapping[str, Any],
+    targets: Sequence[Mapping[str, Any]],
+    generation_rows: Sequence[Mapping[str, Any]],
+    route_rows: Sequence[Mapping[str, Any]],
+    rejected_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    if int(summary.get("official_validation_overlap_count", -1)) != 0:
+        raise ValueError("smoke summary reports official-validation leakage")
+    if len(targets) != int(summary.get("machine_verified_route_targets", -1)):
+        raise ValueError("target count does not match smoke summary")
+
+    accepted = []
+    for target in targets:
+        _assert_visible_quotes(target)
+        final_completion = str(target["messages"][-1]["content"])
+        missing_statements = [
+            str(point["statement"])
+            for point in target["answer_points"]
+            if str(point["statement"]) not in final_completion
+        ]
+        if missing_statements:
+            raise ValueError(
+                f"row {target['source_row_id']}: final answer omits {missing_statements}"
+            )
+        accepted.append(
+            {
+                "source_row_id": int(target["source_row_id"]),
+                "question_fingerprint": str(target["question_fingerprint"]),
+                "split": str(target["split"]),
+                "query": str(target["query"]),
+                "legacy_expected_answer": str(target["legacy_expected_answer"]),
+                "rebuilt_expected_answer": str(target["expected_answer"]),
+                "answer_points": list(target["answer_points"]),
+                "search_turns": int(target["search_turns"]),
+                "search_hops": list(target["search_hops"]),
+                "final_completion": final_completion,
+                "token_protocol_audit": dict(target["_audit"]),
+                "teacher_and_verifier_attempts": _selected_generation_attempts(
+                    target,
+                    generation_rows,
+                ),
+                "route_audit": [
+                    dict(row)
+                    for row in route_rows
+                    if int(row["source_row_id"]) == int(target["source_row_id"])
+                ],
+                "human_review_checklist": {
+                    "all_points_answer_question": None,
+                    "all_quotes_literal_and_sufficient": None,
+                    "no_unsupported_claims": None,
+                    "route_queries_do_not_leak_answer": None,
+                    "complete_readable_answer": None,
+                    "decision": "pending_human_review",
+                },
+            }
+        )
+
+    rejection_counts = Counter(
+        f"{row.get('stage')}:{row.get('reason')}"
+        for row in rejected_rows
+    )
+    rejection_examples = []
+    seen_reasons = set()
+    for row in rejected_rows:
+        reason = f"{row.get('stage')}:{row.get('reason')}"
+        if reason in seen_reasons:
+            continue
+        seen_reasons.add(reason)
+        rejection_examples.append(
+            {
+                "source_row_id": row.get("source_row_id"),
+                "query": row.get("query"),
+                "stage": row.get("stage"),
+                "reason": row.get("reason"),
+            }
+        )
+        if len(rejection_examples) >= 10:
+            break
+    return {
+        "source_summary": dict(summary),
+        "accepted_target_count": len(accepted),
+        "accepted_targets": accepted,
+        "rejection_counts": dict(sorted(rejection_counts.items())),
+        "representative_rejections": rejection_examples,
+    }
+
+
+def main() -> None:
+    _, overrides = _parse_args()
+    rebuild_dir = Path(
+        os.environ.get("QA_REBUILD_REVIEW_DIR", str(DEFAULT_REBUILD_DIR))
+    )
+    paths = {
+        "summary": rebuild_dir / "summary.json",
+        "targets": rebuild_dir / "machine_verified_targets.jsonl",
+        "generation": rebuild_dir / "generation_audit.jsonl",
+        "routes": rebuild_dir / "route_audit.jsonl",
+        "rejected": rebuild_dir / "rejected_candidates.jsonl",
+    }
+    missing = [str(path) for path in paths.values() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(f"missing rebuild review inputs: {missing}")
+
+    report = _build_report(
+        _read_json(paths["summary"]),
+        _read_jsonl(paths["targets"]),
+        _read_jsonl(paths["generation"]),
+        _read_jsonl(paths["routes"]),
+        _read_jsonl(paths["rejected"]),
+    )
+    output_dir = _output_dir(overrides)
+    report_path = output_dir / "review_report.json"
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print("[short-target-review] report", flush=True)
+    print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
+    print(f"[short-target-review] saved: {report_path}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
