@@ -5,6 +5,7 @@ from common.retrieval.qa_sft import (
     build_objective_messages,
     build_search_messages,
     canonical_answer,
+    grounded_points_response,
     observation_with_guidance,
     parse_query_candidate,
     query_rejection_reason,
@@ -47,6 +48,25 @@ def test_search_messages_match_runtime_role_order_and_string_observations():
     assert all(isinstance(message["content"], str) for message in messages)
     assert messages[2]["content"] == "<search>首次查询</search>"
     assert messages[-1]["content"].endswith(r"\boxed{答案}")
+    assert validate_messages(messages) == []
+
+
+def test_rebuilt_short_messages_contain_complete_numbered_points():
+    points = [
+        "第一项由可信证据完整说明。",
+        "第二项给出独立的技术条件。",
+    ]
+    messages = build_search_messages(
+        query="题目",
+        expected="[short] legacy",
+        first_query="查询",
+        first_observation="[检索结果]\n证据",
+        answer_points=points,
+    )
+
+    assert messages[-1]["content"] == grounded_points_response(points)
+    assert "1. 第一项由可信证据完整说明。" in messages[-1]["content"]
+    assert r"\boxed{1. " in messages[-1]["content"]
     assert validate_messages(messages) == []
 
 

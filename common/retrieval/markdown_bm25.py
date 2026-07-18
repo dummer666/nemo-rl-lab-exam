@@ -351,7 +351,8 @@ class MarkdownBM25Index:
         return selected[:top_k]
 
 
-def _best_snippet(text: str, query: str, limit: int) -> str:
+def best_snippet(text: str, query: str, limit: int) -> str:
+    """Return a bounded passage centered on the earliest matching query term."""
     compact = _WHITESPACE.sub(" ", text).strip()
     if len(compact) <= limit:
         return compact
@@ -381,7 +382,7 @@ def format_search_results(
 
     blocks = ["[检索结果]"]
     for index, result in enumerate(results, start=1):
-        snippet = _best_snippet(result.text, query, per_result_chars)
+        snippet = best_snippet(result.text, query, per_result_chars)
         snippet = snippet.replace("<search", "＜search").replace("</search>", "＜/search＞")
         heading = f" · {result.heading}" if result.heading else ""
         display_score = result.raw_score if result.raw_score is not None else result.score

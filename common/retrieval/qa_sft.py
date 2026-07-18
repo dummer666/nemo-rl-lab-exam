@@ -125,6 +125,20 @@ def boxed_response(expected: str, *, grounded: bool) -> str:
     return f"{prefix}\\boxed{{{answer}}}"
 
 
+def grounded_points_response(points: Sequence[str]) -> str:
+    """Render complete evidence-backed points instead of legacy keyword labels."""
+    cleaned = [str(point).strip() for point in points if str(point).strip()]
+    if not 2 <= len(cleaned) <= 6:
+        raise ValueError("grounded short answer must contain 2-6 non-empty points")
+    if len(set(cleaned)) != len(cleaned):
+        raise ValueError("grounded short answer points must be unique")
+    numbered = "；".join(
+        f"{index}. {point}"
+        for index, point in enumerate(cleaned, start=1)
+    )
+    return f"依据检索证据，答案要点为：{numbered}\n\\boxed{{{numbered}}}"
+
+
 def observation_with_guidance(rendered: str, *, searches_remaining: int) -> str:
     if searches_remaining > 0:
         guidance = (
@@ -145,6 +159,7 @@ def build_search_messages(
     first_observation: str,
     second_query: str | None = None,
     second_observation: str | None = None,
+    answer_points: Sequence[str] | None = None,
 ) -> list[dict[str, str]]:
     if bool(second_query) != bool(second_observation):
         raise ValueError("second query and observation must be provided together")
@@ -176,7 +191,11 @@ def build_search_messages(
     messages.append(
         {
             "role": "assistant",
-            "content": boxed_response(expected, grounded=True),
+            "content": (
+                grounded_points_response(answer_points)
+                if answer_points is not None
+                else boxed_response(expected, grounded=True)
+            ),
         }
     )
     return messages
