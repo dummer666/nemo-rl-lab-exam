@@ -238,6 +238,30 @@ def test_agent_forces_warmup_search_before_open_answer(tmp_path):
     assert submitted.reward == 1.0
 
 
+def test_agent_enforces_two_distinct_retrieval_turns_when_required(tmp_path):
+    runner = QARetrievalRunner(_build_index(tmp_path), qa_rule_reward_fn)
+    metadata = {
+        "query": "题目：离子注入系统包括什么？",
+        "expected_answer": "[short] 离子源 ||| 分析磁场",
+        "minimum_searches": 2,
+        "search_count": 0,
+        "search_queries": [],
+    }
+
+    first = runner.process("<search>离子注入 系统组成</search>", metadata)
+    assert first.terminated is False
+    assert "还需检索 1 次" in first.observation
+
+    premature = runner.process(r"\boxed{离子源; 分析磁场}", first.metadata)
+    assert premature.terminated is False
+    assert "必须先检索 2 次" in premature.observation
+
+    second = runner.process("<search>分析磁场 工作原理</search>", premature.metadata)
+    submitted = runner.process(r"\boxed{离子源; 分析磁场}", second.metadata)
+    assert submitted.terminated is True
+    assert submitted.reward == 1.0
+
+
 def test_agent_rewards_only_incremental_evidence_and_penalizes_duplicate(tmp_path):
     runner = QARetrievalRunner(
         _build_index(tmp_path),

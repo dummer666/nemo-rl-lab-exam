@@ -27,6 +27,7 @@ class QARetrievalMetadata(TypedDict, total=False):
     search_queries: list[str]
     invalid_count: int
     force_search: bool
+    minimum_searches: int
     evidence_hits: list[int]
     evidence_coverage: float
     curriculum_step: int
@@ -84,6 +85,14 @@ class QARetrievalRunner:
         self.search_cost = search_cost
         self.duplicate_query_penalty = duplicate_query_penalty
 
+    def _minimum_searches(self, metadata: QARetrievalMetadata) -> int:
+        minimum = int(metadata.get("minimum_searches", 0))
+        if bool(metadata.get("force_search")):
+            minimum = max(1, minimum)
+        if not 0 <= minimum <= self.max_searches:
+            raise ValueError(f"minimum_searches must be between 0 and {self.max_searches}, got {minimum}")
+        return minimum
+
     def _invalid_action(
         self,
         metadata: QARetrievalMetadata,
@@ -128,13 +137,17 @@ class QARetrievalRunner:
     ) -> AgentTurn:
         expected = str(metadata.get("expected_answer", ""))
         original_query = str(metadata.get("query", ""))
+        minimum_searches = self._minimum_searches(metadata)
 
         if extract_boxed(response) is not None:
-            if bool(metadata.get("force_search")) and int(metadata.get("search_count", 0)) == 0:
+            search_count = int(metadata.get("search_count", 0))
+            if search_count < minimum_searches:
+                remaining_required = minimum_searches - search_count
                 return AgentTurn(
                     observation=(
-                        "[检索预热] 这道开放题必须先检索一次再提交答案。"
-                        r"请输出 <search>关键词</search>。"
+                        f"[检索约束] 这道题必须先检索 {minimum_searches} 次再提交答案，"
+                        f"当前已检索 {search_count} 次，还需检索 {remaining_required} 次。"
+                        r"请输出 <search>新的关键词</search>。"
                     ),
                     reward=0.0,
                     terminated=False,
@@ -207,9 +220,7 @@ class QARetrievalRunner:
         ]
         _question_type, keypoints = expected_keypoints(expected)
         previous_hits = {
-            int(hit)
-            for hit in metadata.get("evidence_hits", [])
-            if isinstance(hit, int) and 0 <= hit < len(keypoints)
+            int(hit) for hit in metadata.get("evidence_hits", []) if isinstance(hit, int) and 0 <= hit < len(keypoints)
         }
         current_hits = evidence_keypoint_hits(results, keypoints, top_k=self.top_k)
         cumulative_hits = previous_hits | current_hits
@@ -241,6 +252,9 @@ class QARetrievalRunner:
             guidance = "\n\n" + r"检索次数已用完，下一轮必须提交 \boxed{...}。"
         if duplicate_query and self.duplicate_query_penalty:
             guidance += "\n[检索反馈] 本次关键词与之前重复，请避免无信息增量的检索。"
+        required_remaining = max(0, minimum_searches - next_count)
+        if required_remaining:
+            guidance += f"\n[检索约束] 提交答案前还需检索 {required_remaining} 次，下一轮请更换关键词继续检索。"
         return AgentTurn(
             observation=rendered + guidance,
             reward=search_reward,
