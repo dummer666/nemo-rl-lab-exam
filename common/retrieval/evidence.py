@@ -48,6 +48,21 @@ def evidence_coverage(
     return len(evidence_keypoint_hits(results, keypoints, top_k=top_k)) / len(keypoints)
 
 
+def text_keypoint_hits(
+    text: str,
+    keypoints: Sequence[Sequence[str]],
+) -> set[int]:
+    """Return gold keypoint indexes visible in a rendered text observation."""
+    if not keypoints:
+        return set()
+    evidence = normalize_evidence_text(text)
+    return {
+        index
+        for index, alternatives in enumerate(keypoints)
+        if any(alternative in evidence for alternative in alternatives)
+    }
+
+
 def evidence_keypoint_hits(
     results: Sequence[SearchResult],
     keypoints: Sequence[Sequence[str]],
@@ -62,9 +77,7 @@ def evidence_keypoint_hits(
         for result in results[:top_k]
         if result.quality_category not in {"question-only", "noise"}
     ]
-    evidence = normalize_evidence_text("\n".join(result.text for result in searchable))
-    return {
-        index
-        for index, alternatives in enumerate(keypoints)
-        if any(alternative in evidence for alternative in alternatives)
-    }
+    return text_keypoint_hits(
+        "\n".join(result.text for result in searchable),
+        keypoints,
+    )
