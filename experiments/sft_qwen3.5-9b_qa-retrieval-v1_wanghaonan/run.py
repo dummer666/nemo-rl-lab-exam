@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import runpy
+import sys
 from pathlib import Path
-
-import torch
 
 MODEL_NAME = "Qwen/Qwen3.5-9B"
 PASSTHROUGH_CHAT_TEMPLATE = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
@@ -36,6 +35,7 @@ def _load_retrieval_samples(path: Path, count: int = 5) -> list[dict]:
 
 
 def _run_sft_preflight() -> None:
+    import torch
     from nemo_rl.algorithms.utils import get_tokenizer
     from nemo_rl.data.interfaces import TaskDataSpec
     from nemo_rl.data.llm_message_utils import (
@@ -118,6 +118,18 @@ def _run_sft_preflight() -> None:
     print(json.dumps(summaries, ensure_ascii=False, indent=2))
 
 
+def _drop_unused_generation_overrides() -> None:
+    generation_overrides = [argument for argument in sys.argv[1:] if argument.startswith("policy.generation.")]
+    if not generation_overrides:
+        return
+    sys.argv = [
+        sys.argv[0],
+        *[argument for argument in sys.argv[1:] if not argument.startswith("policy.generation.")],
+    ]
+    print("[sft-preflight] ignored unused hardware generation overrides: " + ", ".join(generation_overrides))
+
+
 if __name__ == "__main__":
     _run_sft_preflight()
+    _drop_unused_generation_overrides()
     runpy.run_path("examples/run_sft.py", run_name="__main__")
