@@ -23,3 +23,18 @@ Outputs are written under the run's `sft_selection/` directory:
 - `primary_validation_candidates.jsonl`
 - `secondary_review_candidates.jsonl`
 - `summary.json`
+
+## Result
+
+Job `raysubmit_nheKEdTqqSMh11BL` completed successfully:
+
+- 873 cleaned open questions were rechecked;
+- 141 have complete evidence in the rendered first Top-4 observation;
+- 125 have complete evidence in Top-20 and require a verified query rewrite;
+- 83 have partial evidence and remain in the review pool;
+- 524 have no answer evidence and are excluded from retrieval SFT;
+- the 266 primary candidates are split into 240 training and 26 validation rows.
+
+Persistent output:
+
+`/shared/outputs/wanghaonan/qa_sft_data_select_wanghaonan/qa_sft_data_select_wanghaonan-wanghaonan-20260718-111114/sft_selection/`
