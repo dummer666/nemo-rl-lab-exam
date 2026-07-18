@@ -1228,6 +1228,11 @@ def main() -> None:
     )
     print("[short-rebuild] summary", flush=True)
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
+    print("[short-rebuild] human-review-samples", flush=True)
+    print(
+        json.dumps(accepted_examples[:3], ensure_ascii=False, indent=2),
+        flush=True,
+    )
 
     del model, tokenizer
     gc.collect()
