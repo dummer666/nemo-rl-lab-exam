@@ -62,12 +62,20 @@ def test_probe_uses_bearer_auth_without_serializing_secrets():
             )
         body = json.loads(request.data)
         assert body["model"] == "judge-model"
+        student_answer = body["messages"][1]["content"]
+        score = (
+            1.0
+            if "alert developers" in student_answer
+            else 0.0
+        )
         return _Response(
             {
                 "choices": [
                     {
                         "message": {
-                            "content": '{"score": 1.0, "reason": "ok"}'
+                            "content": json.dumps(
+                                {"score": score, "reason": "ok"}
+                            )
                         }
                     }
                 ]
@@ -90,8 +98,13 @@ def test_probe_uses_bearer_auth_without_serializing_secrets():
         "judge-model",
         "other-model",
     ]
-    assert report["synthetic_score"]["score"] == 1.0
+    assert report["synthetic_scores"]["semantic_match"]["score"] == 1.0
+    assert report["synthetic_scores"]["keyword_trap"]["score"] == 0.0
+    assert report["synthetic_scores"]["margin"] == 1.0
+    assert report["synthetic_scores"]["discriminates"] is True
+    assert len(seen_authorization) == 3
     assert seen_authorization == [
+        f"Bearer {api_key}",
         f"Bearer {api_key}",
         f"Bearer {api_key}",
     ]
@@ -129,6 +142,38 @@ def test_probe_http_failures_are_sanitized():
     serialized = json.dumps(report)
     assert base_url not in serialized
     assert api_key not in serialized
+
+
+def test_probe_requires_semantic_discrimination():
+    def opener(request, timeout):
+        if request.full_url.endswith("/models"):
+            return _Response({"data": [{"id": "judge-model"}]})
+        return _Response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"score": 0.8, "reason": "same"}'
+                        }
+                    }
+                ]
+            }
+        )
+
+    report = qa_judge_reward.probe_judge_endpoint(
+        {
+            "JUDGE_BASE_URL": "https://private-judge.invalid/v1",
+            "JUDGE_MODEL": "judge-model",
+            "JUDGE_API_KEY": "fake-key",
+        },
+        opener=opener,
+    )
+
+    assert report["available"] is False
+    assert report["synthetic_scores"]["discriminates"] is False
+    assert report["fallback_root_cause"] == (
+        "synthetic_scores_do_not_discriminate"
+    )
 
 
 def test_probe_malformed_url_is_sanitized_and_does_not_raise():

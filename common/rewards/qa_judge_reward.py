@@ -162,12 +162,23 @@ def probe_judge_endpoint(
             "configured_model_listed": False,
             "error": None,
         },
-        "synthetic_score": {
-            "http_status": None,
-            "latency_ms": None,
-            "valid": False,
-            "score": None,
-            "error": None,
+        "synthetic_scores": {
+            "semantic_match": {
+                "http_status": None,
+                "latency_ms": None,
+                "valid": False,
+                "score": None,
+                "error": None,
+            },
+            "keyword_trap": {
+                "http_status": None,
+                "latency_ms": None,
+                "valid": False,
+                "score": None,
+                "error": None,
+            },
+            "margin": None,
+            "discriminates": False,
         },
         "available": False,
         "fallback_root_cause": None,
@@ -222,57 +233,86 @@ def probe_judge_endpoint(
         "error": models_error,
     }
 
-    synthetic_body = json.dumps(
-        {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "Return only JSON with a score from 0 to 1.",
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "Question: Name one benefit of unit tests. "
-                        "Reference point: They catch regressions. "
-                        "Student answer: They catch regressions."
-                    ),
-                },
-            ],
-            "temperature": 0.0,
-            "max_tokens": 64,
+    def synthetic_score(student_answer: str) -> dict[str, Any]:
+        body = json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": _JUDGE_SYS},
+                    {
+                        "role": "user",
+                        "content": (
+                            "【题目】What is one benefit of unit tests?\n"
+                            "【参考要点】They catch regressions.\n"
+                            f"【学生作答】{student_answer}\n"
+                            "Return JSON only."
+                        ),
+                    },
+                ],
+                "temperature": 0.0,
+                "max_tokens": 64,
+            }
+        ).encode("utf-8")
+        status, payload, seconds, error = _request_json(
+            f"{base_url.rstrip('/')}/chat/completions",
+            api_key=api_key,
+            timeout=timeout,
+            body=body,
+            opener=opener,
+        )
+        score = _score_from_payload(payload) if payload is not None else None
+        return {
+            "http_status": status,
+            "latency_ms": round(seconds * 1000, 3),
+            "valid": score is not None,
+            "score": score,
+            "error": error or (
+                None if score is not None else "invalid_score"
+            ),
         }
-    ).encode("utf-8")
-    score_status, score_payload, score_seconds, score_error = _request_json(
-        f"{base_url.rstrip('/')}/chat/completions",
-        api_key=api_key,
-        timeout=timeout,
-        body=synthetic_body,
-        opener=opener,
+
+    semantic_match = synthetic_score(
+        "They alert developers when a change breaks behavior that worked before."
     )
-    score = (
-        _score_from_payload(score_payload)
-        if score_payload is not None
+    keyword_trap = synthetic_score(
+        "They catch regressions by approving broken behavior and hiding failures."
+    )
+    semantic_value = semantic_match["score"]
+    trap_value = keyword_trap["score"]
+    margin = (
+        float(semantic_value) - float(trap_value)
+        if semantic_value is not None and trap_value is not None
         else None
     )
-    report["synthetic_score"] = {
-        "http_status": score_status,
-        "latency_ms": round(score_seconds * 1000, 3),
-        "valid": score is not None,
-        "score": score,
-        "error": score_error or (
-            None if score is not None else "invalid_score"
-        ),
+    discriminates = bool(
+        margin is not None
+        and float(semantic_value) >= 0.75
+        and float(trap_value) <= 0.25
+        and margin >= 0.5
+    )
+    report["synthetic_scores"] = {
+        "semantic_match": semantic_match,
+        "keyword_trap": keyword_trap,
+        "margin": margin,
+        "discriminates": discriminates,
     }
 
     if models_error:
         root_cause = "models_request_failed:" + models_error
     elif model not in model_ids:
         root_cause = "configured_model_not_listed"
-    elif score_error:
-        root_cause = "synthetic_request_failed:" + score_error
-    elif score is None:
-        root_cause = "synthetic_invalid_score"
+    elif semantic_match["error"]:
+        root_cause = (
+            "semantic_match_request_failed:"
+            + str(semantic_match["error"])
+        )
+    elif keyword_trap["error"]:
+        root_cause = (
+            "keyword_trap_request_failed:"
+            + str(keyword_trap["error"])
+        )
+    elif not discriminates:
+        root_cause = "synthetic_scores_do_not_discriminate"
     else:
         root_cause = None
     report["available"] = root_cause is None

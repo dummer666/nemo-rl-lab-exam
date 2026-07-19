@@ -16,7 +16,8 @@ The experiment:
 - reports the isolated single/multiple/bool replay capacity and the balanced
   25%-35% selection size as informational metadata only.
 - safely probes the injected Judge endpoint without emitting its URL or API
-  key, and records `/models` status/latency/model IDs plus one synthetic score;
+  key, and records `/models` status/latency/model IDs plus a semantic-paraphrase
+  score and a contradictory keyword-trap score;
 - when that probe succeeds, re-scores the existing 22 step-50 short
   completions beside their legacy keyword rewards. Probe failure is recorded
   as a sanitized fallback cause and does not stop the fill audit.
