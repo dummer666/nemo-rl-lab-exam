@@ -126,6 +126,31 @@ def test_quality_rerank_demotes_question_only_exam(tmp_path):
     assert index.quality_category_counts["question-only"] == 1
 
 
+def test_search_can_exclude_sources_for_a_diverse_second_hop(tmp_path):
+    (tmp_path / "first.md").write_text(
+        "# ILD 定义\nILD 是 inter layer dielectric 层间介质。\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "second.md").write_text(
+        "# ILD 工艺\nILD 工艺用于形成器件之间的绝缘介质。\n",
+        encoding="utf-8",
+    )
+    index = MarkdownBM25Index.from_directory(
+        tmp_path,
+        chunk_chars=240,
+        overlap_chars=20,
+    )
+
+    first = index.search("ILD 介质", top_k=1)
+    second = index.search(
+        "ILD 介质",
+        top_k=1,
+        exclude_sources={first[0].source},
+    )
+
+    assert first[0].source != second[0].source
+
+
 def test_hybrid_rerank_combines_semantics_and_quality(tmp_path):
     (tmp_path / "device-exam.md").write_text(
         "# Device Exam\nHow many monitor items does ICS8000 have?\n",

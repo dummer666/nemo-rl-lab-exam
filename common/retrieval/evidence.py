@@ -37,6 +37,17 @@ def expected_keypoints(expected: str) -> tuple[str, list[list[str]]]:
     return question_type, keypoints
 
 
+def fragile_keypoint_indexes(
+    keypoints: Sequence[Sequence[str]],
+) -> set[int]:
+    """Flag one-character or one-digit keypoints unsafe for substring evidence."""
+    return {
+        index
+        for index, alternatives in enumerate(keypoints)
+        if max((len(alternative) for alternative in alternatives), default=0) <= 1
+    }
+
+
 def evidence_coverage(
     results: Sequence[SearchResult],
     keypoints: Sequence[Sequence[str]],

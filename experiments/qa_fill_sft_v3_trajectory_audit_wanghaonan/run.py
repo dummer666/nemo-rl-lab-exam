@@ -21,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from common.retrieval.evidence import (  # noqa: E402
     expected_keypoints,
+    fragile_keypoint_indexes,
     normalize_evidence_text,
     visible_evidence_keypoint_hits,
 )
@@ -142,17 +143,6 @@ def _ngrams(text: str, width: int = 2) -> set[str]:
 def query_similarity(first: str, second: str) -> float:
     left, right = _ngrams(first), _ngrams(second)
     return len(left & right) / len(left | right) if left or right else 1.0
-
-
-def fragile_keypoint_indexes(
-    keypoints: Sequence[Sequence[str]],
-) -> set[int]:
-    """Flag one-character or one-digit keypoints that are unsafe substring evidence."""
-    return {
-        index
-        for index, alternatives in enumerate(keypoints)
-        if max((len(alternative) for alternative in alternatives), default=0) <= 1
-    }
 
 
 def classify_two_hop(record: Mapping[str, Any]) -> str:

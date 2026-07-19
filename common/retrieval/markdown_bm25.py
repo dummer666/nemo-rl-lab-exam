@@ -7,7 +7,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Collection, Mapping
 
 _ALNUM = re.compile(r"[a-z0-9]+(?:[._+#/-][a-z0-9]+)*", re.IGNORECASE)
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
@@ -305,10 +305,12 @@ class MarkdownBM25Index:
         *,
         candidate_k: int | None = None,
         quality_rerank: bool = False,
+        exclude_sources: Collection[str] | None = None,
     ) -> list[SearchResult]:
         if top_k <= 0:
             return []
         candidate_limit = max(top_k, int(candidate_k or top_k))
+        excluded = set(exclude_sources or ())
         query_counts = Counter(tokenize(query))
         scores: dict[int, float] = defaultdict(float)
         for term, query_frequency in query_counts.items():
@@ -327,6 +329,8 @@ class MarkdownBM25Index:
         source_counts: Counter[str] = Counter()
         for doc_id, score in ranked:
             chunk = self._chunks[doc_id]
+            if chunk.source in excluded:
+                continue
             if source_counts[chunk.source] >= 2:
                 continue
             quality = self._qualities[doc_id]
