@@ -85,6 +85,8 @@ CRITIC_SYSTEM_PROMPT = """
 严格规则：
 - “when performing”“是由某公司”之类未完成从句、缺少宾语或谓语的文本必须 reject；
 - 命令式按钮操作碎片、菜单/按键串、产品型号介绍残片必须 reject；
+- “MAIN MENU screen”“点击 FLAG/Confirm”“0/1 switch”等 UI 标签或操作记录必须 reject；
+- 只有标题式短语、括号缩写而没有完整谓语的文本必须 reject；
 - 只根据给定 sentence、masked_question、answer、answer_kind、source、heading 判断；
 - 不确定时 reject；accept 仅用于所有检查都清晰通过且 confidence >= 0.90；
 - 只能输出一个符合给定 JSON Schema 的 JSON 对象，不要 Markdown 或额外文字。
@@ -440,39 +442,37 @@ def _review_sample(
     selected: list[dict[str, Any]] = []
     seen = set()
     kinds = ("numeric_unit", "acronym", "quoted_term")
-    dimensions = itertools.product(
-        ("train", "validation"),
-        (1, 2),
-        kinds,
-    )
-    all_rows = [
-        row
-        for split in ("train", "validation")
-        for row in fill_by_split[split]
-    ]
-    for split, hop, kind in dimensions:
-        match = next(
-            (
-                row
-                for row in fill_by_split[split]
-                if int(row["search_turns"]) == hop
-                and any(
-                    candidate["answer_kind"] == kind
-                    for candidate in row["source_candidates"]
-                )
-                and row["question_fingerprint"] not in seen
-            ),
-            None,
-        )
-        if match:
-            selected.append(copy.deepcopy(match))
-            seen.add(match["question_fingerprint"])
-    for row in all_rows:
-        if len(selected) >= min(target, len(all_rows)):
-            break
-        if row["question_fingerprint"] not in seen:
-            selected.append(copy.deepcopy(row))
-            seen.add(row["question_fingerprint"])
+    group_target = max(1, target // 4)
+    for split, hop in itertools.product(("train", "validation"), (1, 2)):
+        group = [
+            row
+            for row in fill_by_split[split]
+            if int(row["search_turns"]) == hop
+        ]
+        group_selected = []
+        for kind in kinds:
+            match = next(
+                (
+                    row
+                    for row in group
+                    if any(
+                        candidate["answer_kind"] == kind
+                        for candidate in row["source_candidates"]
+                    )
+                    and row["question_fingerprint"] not in seen
+                ),
+                None,
+            )
+            if match:
+                group_selected.append(match)
+                seen.add(match["question_fingerprint"])
+        for row in group:
+            if len(group_selected) >= min(group_target, len(group)):
+                break
+            if row["question_fingerprint"] not in seen:
+                group_selected.append(row)
+                seen.add(row["question_fingerprint"])
+        selected.extend(copy.deepcopy(group_selected))
     return selected
 
 
@@ -506,6 +506,8 @@ def main() -> None:
     }
     max_per_split = _env_int("CLOZE_CRITIC_MAX_PER_SPLIT", 0)
     batch_size = _env_int("CLOZE_CRITIC_BATCH_SIZE", 8)
+    reuse_dir_value = os.environ.get("CLOZE_CRITIC_REUSE_DIR", "").strip()
+    reuse_dir = Path(reuse_dir_value) if reuse_dir_value else None
     if batch_size < 1:
         raise ValueError("CLOZE_CRITIC_BATCH_SIZE must be positive")
 
@@ -533,7 +535,11 @@ def main() -> None:
         b=0.75,
     )
     raw_candidates, extraction_reasons = cloze._extract_raw_candidates(index)
-    tokenizer, model = _load_critic()
+    if reuse_dir:
+        tokenizer = cloze._load_tokenizer()
+        model = None
+    else:
+        tokenizer, model = _load_critic()
     objective_train, objective_validation, objective_available = (
         cloze._objective_replay(tokenizer, official_fingerprints)
     )
@@ -561,12 +567,49 @@ def main() -> None:
         output_dir / "validated_candidate_pool.jsonl",
         [_pool_artifact(candidate) for candidate in pool_rows],
     )
-    audits = _generate_verdicts(
-        pool_rows,
-        tokenizer,
-        model,
-        batch_size=batch_size,
-    )
+    if reuse_dir:
+        verdict_path = reuse_dir / "semantic_verdicts.jsonl"
+        if not verdict_path.is_file():
+            raise FileNotFoundError(f"missing reused verdicts: {verdict_path}")
+        previous = {
+            str(audit["candidate_id"]): audit
+            for audit in cloze._read_jsonl(verdict_path)
+        }
+        audits = []
+        for candidate in pool_rows:
+            candidate_id = str(candidate["candidate_id"])
+            if candidate_id in previous:
+                audits.append(previous[candidate_id])
+            else:
+                audits.append(
+                    {
+                        "candidate_id": candidate_id,
+                        "split": str(candidate["split"]),
+                        "source": str(candidate["source"]),
+                        "heading": str(candidate["heading"]),
+                        "sentence": str(candidate["sentence"]),
+                        "masked_sentence": str(candidate["masked_sentence"]),
+                        "answer": str(candidate["answer"]),
+                        "answer_kind": str(candidate["answer_kind"]),
+                        "raw_generation": "",
+                        "verdict": None,
+                        "parse_error": "missing_reused_verdict",
+                        "accepted": False,
+                        "rejection": "missing_reused_verdict",
+                    }
+                )
+        print(
+            f"[cloze-critic] reused_verdicts={len(previous)} "
+            f"matched={sum(audit['parse_error'] != 'missing_reused_verdict' for audit in audits)}",
+            flush=True,
+        )
+    else:
+        audits = _generate_verdicts(
+            pool_rows,
+            tokenizer,
+            model,
+            batch_size=batch_size,
+        )
     _write_jsonl(output_dir / "semantic_verdicts.jsonl", audits)
     accepted_ids = {
         str(audit["candidate_id"]) for audit in audits if audit["accepted"]
@@ -587,7 +630,8 @@ def main() -> None:
         ]
         for split, candidates in pools.items()
     }
-    del model
+    if model is not None:
+        del model
     gc.collect()
     try:
         import torch
@@ -726,6 +770,7 @@ def main() -> None:
             "temperature": 0,
             "minimum_confidence": MIN_CONFIDENCE,
             "json_schema": CRITIC_JSON_SCHEMA,
+            "reused_verdict_dir": str(reuse_dir) if reuse_dir else None,
             "pool_targets": pool_targets,
             "validated_pool_counts": {
                 split: len(rows) for split, rows in pools.items()

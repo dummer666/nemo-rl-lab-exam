@@ -50,6 +50,21 @@ def test_candidate_quality_rejects_slide_and_table_fragments():
         "Dual",
         "acronym",
     )
+    assert "button_or_operation_fragment" in run.candidate_quality_issues(
+        "后依次点击FOSB FLAG，再点击ADD，点击Confirm输入密码确认。",
+        "FLAG",
+        "acronym",
+    )
+    assert "context_dependent_fragment" in run.candidate_quality_issues(
+        "上表中ICPMS测试机台的更新由工程二部进一步跟进定义。",
+        "ICPMS",
+        "acronym",
+    )
+    assert "english_predicate_fragment" in run.candidate_quality_issues(
+        "Measures the intensity of the DUV light at wafer level.",
+        "DUV",
+        "acronym",
+    )
 
 
 def test_candidate_quality_keeps_complete_technical_statements():
