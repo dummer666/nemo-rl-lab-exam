@@ -13,7 +13,7 @@ from typing import Any
 
 PACK_ROOT = Path(
     "/shared/outputs/wanghaonan/qa_objective_sft_data_wanghaonan/"
-    "qa_objective_sft_data_wanghaonan-wanghaonan-20260719-102742/"
+    "qa_objective_sft_data_wanghaonan-wanghaonan-20260719-103155/"
     "objective_sft_data"
 )
 REVIEW_PATH = PACK_ROOT / "review_sample.jsonl"
