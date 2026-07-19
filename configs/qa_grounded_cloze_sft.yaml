@@ -39,6 +39,7 @@ policy:
     scheduler:
       lr_decay_style: "cosine"
       lr_warmup_iters: 4
+      lr_warmup_init: 3.0e-7
       lr_decay_iters: 94
 
 data:
