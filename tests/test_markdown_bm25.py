@@ -194,6 +194,37 @@ def test_agent_search_then_submit_answer(tmp_path):
     assert final_turn.answer == "[single] A"
 
 
+def test_agent_excludes_first_hop_sources_on_second_search(tmp_path):
+    (tmp_path / "first.md").write_text(
+        "# ILD first\nILD dielectric definition and process context.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "second.md").write_text(
+        "# ILD second\nILD dielectric integration and reliability context.\n",
+        encoding="utf-8",
+    )
+    index = MarkdownBM25Index.from_directory(
+        tmp_path,
+        chunk_chars=240,
+        overlap_chars=20,
+    )
+    runner = QARetrievalRunner(index, qa_rule_reward_fn, top_k=1)
+    metadata = {
+        "query": "题目：ILD dielectric",
+        "expected_answer": "[fill] dielectric",
+        "search_count": 0,
+        "search_queries": [],
+    }
+
+    first = runner.process("<search>ILD dielectric</search>", metadata)
+    second = runner.process("<search>ILD dielectric</search>", first.metadata)
+
+    assert first.metadata["retrieved_sources"]
+    assert second.metadata["retrieved_sources"]
+    first_source = first.metadata["retrieved_sources"][0]
+    assert first_source not in second.observation
+
+
 def test_agent_penalizes_search_over_limit(tmp_path):
     runner = QARetrievalRunner(
         _build_index(tmp_path),

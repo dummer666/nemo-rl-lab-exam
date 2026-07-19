@@ -7,7 +7,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Collection, Mapping
+from typing import Collection, Iterator, Mapping
 
 _ALNUM = re.compile(r"[a-z0-9]+(?:[._+#/-][a-z0-9]+)*", re.IGNORECASE)
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
@@ -267,6 +267,25 @@ class MarkdownBM25Index:
     def quality_category_counts(self) -> dict[str, int]:
         counts = Counter(quality.category for quality in self._qualities)
         return {category: counts.get(category, 0) for category in DEFAULT_QUALITY_WEIGHTS}
+
+    def iter_chunks(
+        self,
+        *,
+        quality_categories: Collection[str] | None = None,
+    ) -> Iterator[SearchResult]:
+        """Iterate indexed chunks for deterministic grounded-data construction."""
+        allowed = set(quality_categories or DEFAULT_QUALITY_WEIGHTS)
+        for chunk, quality in zip(self._chunks, self._qualities, strict=True):
+            if quality.category not in allowed:
+                continue
+            yield SearchResult(
+                source=chunk.source,
+                heading=chunk.heading,
+                text=chunk.text,
+                score=0.0,
+                quality_category=quality.category,
+                quality_weight=quality.weight,
+            )
 
     @classmethod
     def from_directory(

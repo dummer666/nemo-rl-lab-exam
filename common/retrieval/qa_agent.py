@@ -30,6 +30,7 @@ class QARetrievalMetadata(TypedDict, total=False):
     minimum_searches: int
     evidence_hits: list[int]
     evidence_coverage: float
+    retrieved_sources: list[str]
     curriculum_step: int
     curriculum_phase: str
 
@@ -204,12 +205,17 @@ class QARetrievalRunner:
             original_query,
             str(metadata.get("bank", "")),
         )
-        results = self.index.search(
-            retrieval_query,
-            top_k=self.top_k,
-            candidate_k=self.candidate_k,
-            quality_rerank=self.quality_rerank,
-        )
+        search_kwargs = {
+            "top_k": self.top_k,
+            "candidate_k": self.candidate_k,
+            "quality_rerank": self.quality_rerank,
+        }
+        if search_count > 0:
+            search_kwargs["exclude_sources"] = metadata.get(
+                "retrieved_sources",
+                [],
+            )
+        results = self.index.search(retrieval_query, **search_kwargs)
         rendered, visible_snippets = format_search_results_with_visible_snippets(
             results,
             retrieval_query,
@@ -225,6 +231,14 @@ class QARetrievalRunner:
             *list(metadata.get("search_queries", [])),
             search_query,
         ]
+        next_metadata["retrieved_sources"] = list(
+            dict.fromkeys(
+                [
+                    *list(metadata.get("retrieved_sources", [])),
+                    *(result.source for result in results),
+                ]
+            )
+        )
         _question_type, keypoints = expected_keypoints(expected)
         previous_hits = {
             int(hit) for hit in metadata.get("evidence_hits", []) if isinstance(hit, int) and 0 <= hit < len(keypoints)
