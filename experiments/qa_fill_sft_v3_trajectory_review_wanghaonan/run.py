@@ -12,7 +12,7 @@ from typing import Any
 
 AUDIT_ROOT = Path(
     "/shared/outputs/wanghaonan/qa_fill_sft_v3_trajectory_audit_wanghaonan/"
-    "qa_fill_sft_v3_trajectory_audit_wanghaonan-wanghaonan-20260719-045411/"
+    "qa_fill_sft_v3_trajectory_audit_wanghaonan-wanghaonan-20260719-050132/"
     "trajectory_audit"
 )
 CRITICAL_DIAGNOSES = {
@@ -64,7 +64,11 @@ def select_review_rows(
     selected: list[int] = []
     for row_index, versions in sorted(by_row.items()):
         diagnoses = {str(row["primary_diagnosis"]) for row in versions}
-        if diagnoses & CRITICAL_DIAGNOSES:
+        has_fragile_evidence = any(
+            bool(row.get("evidence", {}).get("fragile_keypoint_indexes"))
+            for row in versions
+        )
+        if diagnoses & CRITICAL_DIAGNOSES or has_fragile_evidence:
             selected.append(row_index)
 
     quotas = {

@@ -6,6 +6,7 @@ def _row(row_index, step, diagnosis):
         "row_index": row_index,
         "step": step,
         "primary_diagnosis": diagnosis,
+        "evidence": {"fragile_keypoint_indexes": []},
     }
 
 
@@ -16,6 +17,10 @@ def test_review_selection_keeps_all_versions_of_critical_rows():
         _row(2, 40, "incremental_evidence_not_used"),
         _row(3, 40, "off_target_second_search"),
         _row(4, 40, "redundant_second_search"),
+        {
+            **_row(5, 40, "off_target_second_search"),
+            "evidence": {"fragile_keypoint_indexes": [0]},
+        },
     ]
 
     selected = run.select_review_rows(rows)
@@ -27,4 +32,4 @@ def test_review_selection_keeps_all_versions_of_critical_rows():
     assert {
         versions[0]["row_index"]
         for versions in selected
-    } == {1, 2, 3, 4}
+    } == {1, 2, 3, 4, 5}
