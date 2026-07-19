@@ -87,6 +87,8 @@ _STRUCTURED_DEFINITION = re.compile(
     r"[（(][A-Z][A-Z0-9+./-]{2,14}[）)]|"
     r"[A-Z][A-Z0-9+./-]{2,14}[（(][^）)]{2,40}[）)]"
 )
+_BULLET_PREFIX = re.compile(r"^\s*[–—•●▪✓]\s*")
+_COMPLETE_SENTENCE_END = re.compile(r"[。！？!?；;.)）\]】]$")
 _CONTENT_NOISE = re.compile(
     r"slide\s+number|###\s*notes|<!--|<html|copyright|all\s+rights|"
     r"prior\s+consent|own\s+risk|equivalent\s+to\s+rev|"
@@ -207,6 +209,10 @@ def candidate_quality_issues(
         issues.append("table_fragment")
     if sentence.lstrip().startswith(("--", "<", "|")):
         issues.append("markup_fragment")
+    if _BULLET_PREFIX.search(sentence):
+        issues.append("slide_bullet_fragment")
+    if not _COMPLETE_SENTENCE_END.search(sentence):
+        issues.append("missing_sentence_terminator")
     if len(_CJK.findall(sentence)) < 10 and len(_ENGLISH_WORD.findall(sentence)) < 8:
         issues.append("insufficient_sentence_context")
     if (

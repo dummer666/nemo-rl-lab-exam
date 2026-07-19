@@ -40,6 +40,16 @@ def test_candidate_quality_rejects_slide_and_table_fragments():
         "E3000399",
         "acronym",
     )
+    assert "slide_bullet_fragment" in run.candidate_quality_issues(
+        "–挖掘FDC数据中的有效信息来解决设备问题并提升整体效能。",
+        "FDC",
+        "acronym",
+    )
+    assert "missing_sentence_terminator" in run.candidate_quality_issues(
+        "Universal-300 Dual 是由天津华海清科机电科技",
+        "Dual",
+        "acronym",
+    )
 
 
 def test_candidate_quality_keeps_complete_technical_statements():
