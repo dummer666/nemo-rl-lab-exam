@@ -31,7 +31,7 @@ from common.retrieval.qa_target_rebuild import question_fingerprint  # noqa: E40
 from experiments.qa_grounded_cloze_data_wanghaonan import run as cloze  # noqa: E402
 
 MODEL_NAME = "Qwen/Qwen3.5-9B"
-DEFAULT_POOL_TARGETS = {"train": 1400, "validation": 280}
+DEFAULT_POOL_TARGETS = {"train": 1000, "validation": 220}
 MIN_CONFIDENCE = 0.9
 CRITIC_NOISE_FIELDS = (
     "table_fragment",
