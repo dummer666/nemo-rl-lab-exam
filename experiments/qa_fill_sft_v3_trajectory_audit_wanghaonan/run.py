@@ -144,6 +144,17 @@ def query_similarity(first: str, second: str) -> float:
     return len(left & right) / len(left | right) if left or right else 1.0
 
 
+def fragile_keypoint_indexes(
+    keypoints: Sequence[Sequence[str]],
+) -> set[int]:
+    """Flag one-character or one-digit keypoints that are unsafe substring evidence."""
+    return {
+        index
+        for index, alternatives in enumerate(keypoints)
+        if max((len(alternative) for alternative in alternatives), default=0) <= 1
+    }
+
+
 def classify_two_hop(record: Mapping[str, Any]) -> str:
     if float(record["reward_delta"]) > 1e-9:
         return "useful_score_gain"
@@ -245,10 +256,14 @@ def _audit_two_hop(
     _question_type, keypoints = expected_keypoints(
         str(candidate["expected_answer"])
     )
-    first_hits = set(hops[0]["trusted_keypoint_hits"])
-    second_hits = set(hops[1]["trusted_keypoint_hits"])
+    fragile_hits = fragile_keypoint_indexes(keypoints)
+    raw_first_hits = set(hops[0]["trusted_keypoint_hits"])
+    raw_second_hits = set(hops[1]["trusted_keypoint_hits"])
+    first_hits = raw_first_hits - fragile_hits
+    second_hits = raw_second_hits - fragile_hits
     cumulative_hits = first_hits | second_hits
     keypoint_count = len(keypoints)
+    robust_keypoint_count = keypoint_count - len(fragile_hits)
     first_sources = set(hops[0]["sources"])
     second_sources = set(hops[1]["sources"])
     candidate_response = _final_response(candidate)
@@ -296,20 +311,29 @@ def _audit_two_hop(
         },
         "evidence": {
             "keypoint_count": keypoint_count,
+            "robust_keypoint_count": robust_keypoint_count,
+            "fragile_keypoint_indexes": sorted(fragile_hits),
+            "raw_first_keypoint_hits": sorted(raw_first_hits),
+            "raw_second_keypoint_hits": sorted(raw_second_hits),
+            "raw_incremental_keypoint_hits": sorted(
+                raw_second_hits - raw_first_hits
+            ),
             "first_keypoint_hits": sorted(first_hits),
             "second_keypoint_hits": sorted(second_hits),
             "incremental_keypoint_hits": sorted(second_hits - first_hits),
             "cumulative_keypoint_hits": sorted(cumulative_hits),
             "first_hop_full": bool(
-                keypoint_count and len(first_hits) == keypoint_count
+                robust_keypoint_count
+                and len(first_hits) == robust_keypoint_count
             ),
             "second_made_full": bool(
-                keypoint_count
-                and len(first_hits) < keypoint_count
-                and len(cumulative_hits) == keypoint_count
+                robust_keypoint_count
+                and len(first_hits) < robust_keypoint_count
+                and len(cumulative_hits) == robust_keypoint_count
             ),
             "full_after_two_hops": bool(
-                keypoint_count and len(cumulative_hits) == keypoint_count
+                robust_keypoint_count
+                and len(cumulative_hits) == robust_keypoint_count
             ),
             "new_sources": sorted(second_sources - first_sources),
         },
@@ -372,6 +396,14 @@ def _step_summary(
         ),
         "second_hop_incremental_keypoint_count": sum(
             bool(record["evidence"]["incremental_keypoint_hits"])
+            for record in records
+        ),
+        "second_hop_raw_incremental_keypoint_count": sum(
+            bool(record["evidence"]["raw_incremental_keypoint_hits"])
+            for record in records
+        ),
+        "fragile_keypoint_record_count": sum(
+            bool(record["evidence"]["fragile_keypoint_indexes"])
             for record in records
         ),
         "first_hop_already_full_count": sum(
@@ -534,7 +566,9 @@ def main() -> None:
             "short_semantic_conclusions_allowed": False,
             "reason": (
                 "The platform Judge is not injected; short rewards remain lexical. "
-                "No candidate improved fill accuracy, so GRPO promotion remains closed."
+                "Single-character and single-digit substring hits are marked fragile "
+                "instead of being treated as complete evidence. No candidate improved "
+                "fill accuracy, so GRPO promotion remains closed."
             ),
         },
         "human_reviewed": False,

@@ -17,6 +17,12 @@ def test_query_similarity_distinguishes_repeat_from_rewrite():
     assert run.query_similarity("湿法刻蚀 清洗", "扩散炉 温度") < 0.2
 
 
+def test_fragile_keypoints_exclude_incidental_single_character_hits():
+    keypoints = [["dnw"], ["反"], ["5"], ["层间介质", "ild"]]
+
+    assert run.fragile_keypoint_indexes(keypoints) == {1, 2}
+
+
 def test_classification_separates_evidence_and_synthesis_failures():
     base = {
         "reward_delta": 0.0,

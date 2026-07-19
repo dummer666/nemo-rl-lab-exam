@@ -109,6 +109,15 @@ def _compact(versions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 "first_sources": row["search"]["first_sources"],
                 "second_sources": row["search"]["second_sources"],
                 "new_sources": row["search"]["new_sources"],
+                "fragile_keypoint_indexes": row["evidence"][
+                    "fragile_keypoint_indexes"
+                ],
+                "raw_first_keypoint_hits": row["evidence"][
+                    "raw_first_keypoint_hits"
+                ],
+                "raw_second_keypoint_hits": row["evidence"][
+                    "raw_second_keypoint_hits"
+                ],
                 "first_keypoint_hits": row["evidence"]["first_keypoint_hits"],
                 "second_keypoint_hits": row["evidence"]["second_keypoint_hits"],
                 "incremental_keypoint_hits": row["evidence"][
@@ -118,6 +127,9 @@ def _compact(versions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                     "cumulative_keypoint_hits"
                 ],
                 "keypoint_count": row["evidence"]["keypoint_count"],
+                "robust_keypoint_count": row["evidence"][
+                    "robust_keypoint_count"
+                ],
             }
             for row in versions
         ],
