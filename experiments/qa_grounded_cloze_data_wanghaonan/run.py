@@ -83,12 +83,13 @@ _SEMANTIC_PREDICATE = re.compile(
     r"calculates?|loads?|contains?|consists?|defined|requires?|records?)\b",
     re.IGNORECASE,
 )
-_BULLET_PREFIX = re.compile(r"^\s*[–—•●▪✓]\s*")
+_BULLET_PREFIX = re.compile(r"^\s*[–—•●▪►✓]\s*")
 _COMPLETE_SENTENCE_END = re.compile(r"[。！？!?.)）\]】]$")
 _DISCOURSE_FRAGMENT = re.compile(r"^(?:其次|上表中|如下|上述)")
+_NUMBERED_ENGLISH_FRAGMENT = re.compile(r"^\s*\d+(?:[.)]\s*|(?=[A-Z]))")
 _OPERATION_FRAGMENT = re.compile(
     r"依次点击|再点击|点击.*(?:确认|密码)|"
-    r"\b(?:MAIN\s+MENU|MENU\s+screen|button|0/1\s+switch)\b",
+    r"\b(?:MAIN\s+MENU|MENU\s+screen|button|0/1\s+switch|check\s+that)\b",
     re.IGNORECASE,
 )
 _SHIFT_LOG_FRAGMENT = re.compile(
@@ -97,6 +98,11 @@ _SHIFT_LOG_FRAGMENT = re.compile(
 )
 _ENGLISH_PREDICATE_FRAGMENT = re.compile(
     r"^(?:measures?|controls?|calculates?|records?|loads?|uses?|provides?)\b",
+    re.IGNORECASE,
+)
+_ENGLISH_COMPLETE_PREDICATE = re.compile(
+    r"\b(?:is|are|means|stands\s+for|was|were|has|have|"
+    r"can|will|shall|requires?|contains?|consists?)\b",
     re.IGNORECASE,
 )
 _CONTENT_NOISE = re.compile(
@@ -225,12 +231,20 @@ def candidate_quality_issues(
         issues.append("missing_sentence_terminator")
     if _DISCOURSE_FRAGMENT.search(sentence):
         issues.append("context_dependent_fragment")
+    if _NUMBERED_ENGLISH_FRAGMENT.search(sentence):
+        issues.append("numbered_instruction_fragment")
     if _OPERATION_FRAGMENT.search(sentence):
         issues.append("button_or_operation_fragment")
     if _SHIFT_LOG_FRAGMENT.search(sentence):
         issues.append("shift_log_fragment")
     if _ENGLISH_PREDICATE_FRAGMENT.search(sentence):
         issues.append("english_predicate_fragment")
+    if (
+        not _CJK.search(sentence)
+        and _ENGLISH_WORD.search(sentence)
+        and not _ENGLISH_COMPLETE_PREDICATE.search(sentence)
+    ):
+        issues.append("english_title_fragment")
     if len(_CJK.findall(sentence)) < 10 and len(_ENGLISH_WORD.findall(sentence)) < 8:
         issues.append("insufficient_sentence_context")
     if not _SEMANTIC_PREDICATE.search(sentence):

@@ -65,6 +65,21 @@ def test_candidate_quality_rejects_slide_and_table_fragments():
         "DUV",
         "acronym",
     )
+    assert "numbered_instruction_fragment" in run.candidate_quality_issues(
+        "18Check that the High Pressure Exhaust Valve (HPEX) is CLOSED.",
+        "HPEX",
+        "acronym",
+    )
+    assert "english_title_fragment" in run.candidate_quality_issues(
+        "ASCAL Wafer-by-Wafer LH ILIAS Advanced Lens Control (ALC)",
+        "ALC",
+        "acronym",
+    )
+    assert "slide_bullet_fragment" in run.candidate_quality_issues(
+        "► 匹配规则包含4个过滤器。",
+        "4个",
+        "numeric_unit",
+    )
 
 
 def test_candidate_quality_keeps_complete_technical_statements():
