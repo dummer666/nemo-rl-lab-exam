@@ -13,6 +13,8 @@ The experiment:
 - preserves source splits and rejects cross-split or conflicting duplicates;
 - writes full accepted/rejected diagnostics and a review set containing every
   two-hop result plus a deterministic random sample of 20 other results.
+- reports the isolated single/multiple/bool replay capacity and the balanced
+  25%-35% selection size as informational metadata only.
 
 It does not read short-answer rebuild outputs, bypass the joint pack gate, or
 start training. Even when the machine gate passes, every record remains

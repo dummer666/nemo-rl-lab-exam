@@ -22,8 +22,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from common.retrieval.markdown_bm25 import MarkdownBM25Index  # noqa: E402
 from common.retrieval.qa_sft_v2 import (  # noqa: E402
+    OBJECTIVE_TYPES,
     SPLITS,
     assert_question_split_isolation,
+    objective_replay_fraction,
+    select_balanced_objective_replay,
+    select_objective_validation,
 )
 from common.retrieval.qa_target_rebuild import question_fingerprint  # noqa: E402
 from experiments.qa_sft_v2_data_build_wanghaonan.run import (  # noqa: E402
@@ -434,6 +438,130 @@ def _representative_rejections(
     return representatives
 
 
+def _objective_replay_availability(
+    records: Sequence[Mapping[str, Any]],
+    accepted_fill: Sequence[Mapping[str, Any]],
+    official_fingerprints: set[str],
+) -> dict[str, Any]:
+    raw = [
+        dict(record)
+        for record in records
+        if record.get("question_type") in OBJECTIVE_TYPES
+    ]
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in raw:
+        groups[
+            question_fingerprint(str(record.get("query", "")))
+        ].append(record)
+
+    accepted_fill_fingerprints = {
+        str(record["question_fingerprint"])
+        for record in accepted_fill
+    }
+    candidates = []
+    exclusions: Counter[str] = Counter()
+    for fingerprint, group in sorted(groups.items()):
+        ordered = sorted(group, key=_row_id)
+        splits = {str(record.get("split", "")) for record in ordered}
+        question_types = {
+            str(record.get("question_type", ""))
+            for record in ordered
+        }
+        if splits - set(SPLITS):
+            exclusions["invalid_source_split"] += 1
+            continue
+        if len(splits) != 1:
+            exclusions["source_question_cross_split"] += 1
+            continue
+        if len(question_types) != 1:
+            exclusions["source_question_conflicting_type"] += 1
+            continue
+        if fingerprint in official_fingerprints:
+            exclusions["official_validation_overlap"] += 1
+            continue
+        if fingerprint in accepted_fill_fingerprints:
+            exclusions["fill_question_overlap"] += 1
+            continue
+        candidates.append(
+            {
+                **ordered[0],
+                "question_fingerprint": fingerprint,
+            }
+        )
+
+    fill_train_count = sum(
+        record.get("split") == "train"
+        for record in accepted_fill
+    )
+    train_candidates = [
+        record
+        for record in candidates
+        if record.get("split") == "train"
+    ]
+    validation_candidates = [
+        record
+        for record in candidates
+        if record.get("split") == "validation"
+    ]
+    train_selection = []
+    train_selection_error = None
+    try:
+        train_selection = select_balanced_objective_replay(
+            train_candidates,
+            open_train_count=fill_train_count,
+        )
+    except ValueError as error:
+        train_selection_error = str(error)
+
+    validation_selection = []
+    validation_selection_error = None
+    try:
+        validation_selection = select_objective_validation(
+            validation_candidates,
+            per_type=2,
+        )
+    except ValueError as error:
+        validation_selection_error = str(error)
+
+    return {
+        "raw_rows": len(raw),
+        "unique_source_questions": len(groups),
+        "eligible_unique_questions": len(candidates),
+        "exclusion_counts": dict(sorted(exclusions.items())),
+        "available_counts": _count_by(
+            candidates,
+            "split",
+            "question_type",
+        ),
+        "balanced_train_replay": {
+            "open_fill_train_count": fill_train_count,
+            "selected_count": len(train_selection),
+            "selected_per_type": _count_by(
+                train_selection,
+                "question_type",
+            ),
+            "resulting_fraction": (
+                objective_replay_fraction(
+                    [*accepted_fill, *train_selection]
+                )
+                if train_selection
+                else None
+            ),
+            "selection_error": train_selection_error,
+        },
+        "validation_replay": {
+            "selected_count": len(validation_selection),
+            "selected_per_type": _count_by(
+                validation_selection,
+                "question_type",
+            ),
+            "selection_error": validation_selection_error,
+        },
+        "informational_only": True,
+        "included_in_training_outputs": False,
+    }
+
+
 def _machine_gate(
     accepted: Sequence[Mapping[str, Any]],
     audit_rows: Sequence[Mapping[str, Any]],
@@ -552,6 +680,11 @@ def main() -> None:
         audit_rows,
         official_fingerprints,
     )
+    objective_replay_availability = _objective_replay_availability(
+        v1_records,
+        accepted,
+        official_fingerprints,
+    )
 
     paths = {
         "accepted_manifest": output_dir / "accepted_fill_manifest.jsonl",
@@ -632,6 +765,7 @@ def main() -> None:
             row["token_check"] == "failed"
             for row in rejected
         ),
+        "objective_replay_availability": objective_replay_availability,
         "token_lengths": {
             "min": min(token_lengths) if token_lengths else None,
             "mean": mean(token_lengths) if token_lengths else None,

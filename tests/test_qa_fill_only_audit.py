@@ -4,6 +4,7 @@ from common.retrieval.qa_target_rebuild import question_fingerprint
 from experiments.qa_fill_only_audit_wanghaonan import run as fill_audit
 
 _machine_gate = fill_audit._machine_gate
+_objective_replay_availability = fill_audit._objective_replay_availability
 _review_samples = fill_audit._review_samples
 _unique_fill_sources = fill_audit._unique_fill_sources
 
@@ -177,3 +178,54 @@ def test_fill_machine_gate_requires_all_isolated_split_thresholds():
     gate = _machine_gate(accepted[:-1], audit_rows[:-1], set())
     assert not gate["passed"]
     assert not gate["split_threshold_checks"]["rl_holdout"]
+
+
+def test_objective_replay_availability_is_balanced_and_informational():
+    fill = [
+        _accepted(index, split="train")
+        for index in range(38)
+    ]
+    objectives = []
+    row_id = 1000
+    for split, per_type in (("train", 24), ("validation", 4)):
+        for question_type in ("single", "multiple", "bool"):
+            for index in range(per_type):
+                objectives.append(
+                    {
+                        "row_id": row_id,
+                        "question_type": question_type,
+                        "query": (
+                            f"{split} {question_type} objective {index}"
+                        ),
+                        "expected_answer": f"[{question_type}] A",
+                        "split": split,
+                    }
+                )
+                row_id += 1
+
+    availability = _objective_replay_availability(
+        objectives,
+        fill,
+        set(),
+    )
+
+    assert availability["raw_rows"] == 84
+    assert availability["available_counts"] == {
+        "train:bool": 24,
+        "train:multiple": 24,
+        "train:single": 24,
+        "validation:bool": 4,
+        "validation:multiple": 4,
+        "validation:single": 4,
+    }
+    train = availability["balanced_train_replay"]
+    assert train["selected_count"] == 15
+    assert train["selected_per_type"] == {
+        "bool": 5,
+        "multiple": 5,
+        "single": 5,
+    }
+    assert train["resulting_fraction"] == 15 / 53
+    assert availability["validation_replay"]["selected_count"] == 6
+    assert availability["informational_only"]
+    assert not availability["included_in_training_outputs"]
