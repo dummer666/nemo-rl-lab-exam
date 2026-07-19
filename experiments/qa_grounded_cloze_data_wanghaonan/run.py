@@ -104,6 +104,10 @@ _ENGLISH_PREDICATE_FRAGMENT = re.compile(
     r"^(?:measures?|controls?|calculates?|records?|loads?|uses?|provides?)\b",
     re.IGNORECASE,
 )
+_ENGLISH_OPERATION_IMPERATIVE = re.compile(
+    r"^(?:check|make\s+sure|ensure|press|select|click|enter|turn)\b",
+    re.IGNORECASE,
+)
 _ENGLISH_COMPLETE_PREDICATE = re.compile(
     r"\b(?:is|are|means|stands\s+for|was|were|has|have|"
     r"can|will|shall|requires?|contains?|consists?)\b",
@@ -245,6 +249,8 @@ def candidate_quality_issues(
         issues.append("acknowledgement_fragment")
     if _ENGLISH_PREDICATE_FRAGMENT.search(sentence):
         issues.append("english_predicate_fragment")
+    if _ENGLISH_OPERATION_IMPERATIVE.search(sentence):
+        issues.append("button_or_operation_fragment")
     if (
         not _CJK.search(sentence)
         and _ENGLISH_WORD.search(sentence)

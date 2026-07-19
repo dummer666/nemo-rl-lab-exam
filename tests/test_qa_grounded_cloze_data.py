@@ -90,6 +90,11 @@ def test_candidate_quality_rejects_slide_and_table_fragments():
         "MARCO",
         "acronym",
     )
+    assert "button_or_operation_fragment" in run.candidate_quality_issues(
+        "Check to make sure that the POWER lamp (green) is lit.",
+        "POWER",
+        "acronym",
+    )
 
 
 def test_candidate_quality_keeps_complete_technical_statements():
