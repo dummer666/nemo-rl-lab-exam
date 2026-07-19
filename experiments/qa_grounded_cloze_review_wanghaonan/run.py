@@ -18,7 +18,7 @@ from experiments.qa_grounded_cloze_data_wanghaonan.run import (
 
 PACK_ROOT = Path(
     "/shared/outputs/wanghaonan/qa_grounded_cloze_data_wanghaonan/"
-    "qa_grounded_cloze_data_wanghaonan-wanghaonan-20260719-054717/"
+    "qa_grounded_cloze_data_wanghaonan-wanghaonan-20260719-061248/"
     "grounded_cloze"
 )
 _BAD_ACRONYM = {
