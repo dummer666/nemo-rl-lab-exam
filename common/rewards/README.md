@@ -25,7 +25,9 @@
 
 ## 简答裁判（LLM-as-judge）
 
-简答没有唯一答案，用一个裁判 LLM 打分。**务必本地起 vLLM 兼容端点**，别打公网 API：
+简答没有唯一答案，用一个裁判 LLM 打分。NeMo Lab 的托管作业由中心服务注入
+`JUDGE_BASE_URL`、`JUDGE_MODEL` 和 `JUDGE_API_KEY`；以下本地 vLLM 配置只用于
+仓库外的独立开发，不应覆盖 Lab 注入值：
 
 ```bash
 vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001
@@ -36,7 +38,10 @@ export JUDGE_CONCURRENCY=16
 export JUDGE_TIMEOUT=30
 ```
 
-端点连不上时自动回退到关键词覆盖率，训练不会中断。是否启用裁判由实验 `config.yaml` 的 `env.qa.cfg.use_judge` 控制。
+客户端使用标准 Bearer 鉴权。端点连不上时会回退到关键词覆盖率；是否启用裁判由
+实验 `config.yaml` 的 `env.qa.cfg.use_judge` 控制。只读审计可调用
+`probe_judge_endpoint()`：报告变量是否存在、模型 ID、HTTP 状态和延迟，但不会返回
+端点 URL 或 API key。
 
 ## 自测
 

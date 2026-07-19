@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from common.retrieval.qa_target_rebuild import question_fingerprint
 from experiments.qa_fill_only_audit_wanghaonan import run as fill_audit
 
@@ -49,6 +51,123 @@ def _accepted(index: int, *, split: str, search_turns: int = 1):
             "runtime_raw_chunk_alignment": True,
         },
     }
+
+
+def _write_trajectory(path, row):
+    path.write_text(
+        json.dumps(row, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_step50_short_reevaluation_records_unavailable_endpoint(tmp_path):
+    path = tmp_path / "trajectories.jsonl"
+    _write_trajectory(
+        path,
+        {
+            "row_index": 7,
+            "question_type": "short",
+            "query": "题目：说明优点。",
+            "expected_answer": "[short] 低温 ||| 纯度高",
+            "assistant_responses": [
+                "<search>说明优点</search>",
+                r"答案。\boxed{低温}",
+            ],
+            "reward": 0.5,
+            "search_count": 1,
+            "protocol_error": False,
+        },
+    )
+
+    summary, details = fill_audit._step50_short_judge_reevaluation(
+        path,
+        {
+            "available": False,
+            "fallback_root_cause": "missing_env:JUDGE_API_KEY",
+        },
+    )
+
+    assert summary["status"] == "skipped"
+    assert summary["fallback_root_cause"] == (
+        "missing_env:JUDGE_API_KEY"
+    )
+    assert summary["short_completion_count"] == 1
+    assert summary["legacy_keyword_reward"]["mean"] == 0.5
+    assert details[0]["semantic_judge_score"] is None
+    assert details[0]["runtime_reward_source"] == "keyword_fallback"
+    assert details[0]["runtime_judge_reward"] == 0.5
+
+
+def test_step50_short_reevaluation_compares_semantic_score(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "trajectories.jsonl"
+    _write_trajectory(
+        path,
+        {
+            "row_index": 8,
+            "question_type": "short",
+            "query": "题目：说明优点。",
+            "expected_answer": "[short] 低温 ||| 纯度高",
+            "assistant_responses": [r"同义表达。\boxed{未命中词面}"],
+            "reward": 0.0,
+            "search_count": 1,
+            "protocol_error": False,
+        },
+    )
+    monkeypatch.setattr(
+        fill_audit,
+        "judge_short_answer_score",
+        lambda query, completion, expected: 0.75,
+    )
+
+    summary, details = fill_audit._step50_short_judge_reevaluation(
+        path,
+        {"available": True, "fallback_root_cause": None},
+    )
+
+    assert summary["status"] == "completed"
+    assert summary["legacy_keyword_reward"]["mean"] == 0.0
+    assert summary["semantic_judge_score"]["mean"] == 0.75
+    assert summary["comparison"]["gain_count"] == 1
+    assert details[0]["runtime_judge_reward"] == 0.75
+    assert details[0]["runtime_reward_source"] == "semantic_judge"
+
+
+def test_step50_short_invalid_concurrency_matches_runtime_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "trajectories.jsonl"
+    _write_trajectory(
+        path,
+        {
+            "row_index": 9,
+            "question_type": "short",
+            "query": "题目：说明优点。",
+            "expected_answer": "[short] 低温 ||| 纯度高",
+            "assistant_responses": [r"答案。\boxed{低温}"],
+            "reward": 0.5,
+            "search_count": 1,
+            "protocol_error": False,
+        },
+    )
+    monkeypatch.setenv("JUDGE_CONCURRENCY", "invalid")
+
+    summary, details = fill_audit._step50_short_judge_reevaluation(
+        path,
+        {"available": True, "fallback_root_cause": None},
+    )
+
+    assert summary["status"] == "skipped"
+    assert summary["fallback_root_cause"] == (
+        "invalid_judge_concurrency"
+    )
+    assert summary["runtime_judge_reward"]["mean"] == 0.5
+    assert summary["comparison"]["unchanged_count"] == 1
+    assert details[0]["runtime_judge_reward"] == 0.5
+    assert details[0]["runtime_reward_source"] == "keyword_fallback"
 
 
 def test_unique_fill_sources_deduplicates_and_rejects_unsafe_groups():

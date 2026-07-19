@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Audit fill-only retrieval trajectories without reading short-answer outputs."""
+"""Audit fill retrieval and safely re-evaluate existing step50 short outputs."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -30,6 +31,15 @@ from common.retrieval.qa_sft_v2 import (  # noqa: E402
     select_objective_validation,
 )
 from common.retrieval.qa_target_rebuild import question_fingerprint  # noqa: E402
+from common.rewards.qa_judge_reward import (  # noqa: E402
+    judge_short_answer_score,
+    probe_judge_endpoint,
+)
+from common.rewards.qa_reward import (  # noqa: E402
+    FORMAT_PENALTY,
+    extract_boxed,
+    qa_rule_reward_fn,
+)
 from experiments.qa_sft_v2_data_build_wanghaonan.run import (  # noqa: E402
     DEFAULT_V1_MANIFEST,
     MAX_TOKENS,
@@ -38,6 +48,12 @@ from experiments.qa_sft_v2_data_build_wanghaonan.run import (  # noqa: E402
 )
 
 EXPECTED_OFFICIAL_FINGERPRINTS = 313
+EXPECTED_STEP50_SHORT_COMPLETIONS = 22
+DEFAULT_STEP50_TRAJECTORIES = Path(
+    "/shared/outputs/wanghaonan/qa_sft_multiturn_eval_wanghaonan/"
+    "qa_sft_multiturn_eval_wanghaonan-wanghaonan-20260718-141126/"
+    "sft_multiturn_eval/step_50/trajectories.jsonl"
+)
 MIN_SPLIT_COUNTS = {
     "train": 40,
     "validation": 8,
@@ -78,6 +94,240 @@ def _write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _last_assistant_completion(row: Mapping[str, Any]) -> str:
+    responses = row.get("assistant_responses")
+    if not isinstance(responses, list):
+        return ""
+    return next(
+        (
+            str(response).strip()
+            for response in reversed(responses)
+            if str(response).strip()
+        ),
+        "",
+    )
+
+
+def _score_summary(scores: Sequence[float]) -> dict[str, Any]:
+    return {
+        "count": len(scores),
+        "mean": mean(scores) if scores else None,
+        "perfect_count": sum(score >= 1.0 for score in scores),
+    }
+
+
+def _record_keyword_fallback(
+    summary: dict[str, Any],
+    details: Sequence[dict[str, Any]],
+    keyword_scores: Sequence[float],
+) -> None:
+    for detail in details:
+        detail["runtime_judge_reward"] = detail[
+            "legacy_keyword_reward"
+        ]
+        detail["runtime_reward_source"] = "keyword_fallback"
+    summary["runtime_judge_reward"] = _score_summary(keyword_scores)
+    summary["comparison"] = {
+        "gain_count": 0,
+        "loss_count": 0,
+        "unchanged_count": len(keyword_scores),
+    }
+
+
+def _step50_short_judge_reevaluation(
+    trajectories_path: Path,
+    endpoint_probe: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    summary: dict[str, Any] = {
+        "status": "not_run",
+        "source_present": trajectories_path.is_file(),
+        "expected_short_completion_count": (
+            EXPECTED_STEP50_SHORT_COMPLETIONS
+        ),
+        "short_completion_count": 0,
+        "count_matches_expected": False,
+        "legacy_keyword_reward": _score_summary([]),
+        "semantic_judge_score": {
+            **_score_summary([]),
+            "attempted_count": 0,
+            "failure_count": 0,
+        },
+        "runtime_judge_reward": _score_summary([]),
+        "comparison": {
+            "gain_count": 0,
+            "loss_count": 0,
+            "unchanged_count": 0,
+        },
+        "single_keypoint_reference_count": 0,
+        "degenerate_code_reference_count": 0,
+        "fallback_root_cause": None,
+    }
+    if not trajectories_path.is_file():
+        summary["status"] = "skipped"
+        summary["fallback_root_cause"] = "step50_trajectories_missing"
+        return summary, []
+
+    rows = _read_jsonl(trajectories_path)
+    short_rows = [
+        row
+        for row in rows
+        if str(row.get("question_type", "")).lower() == "short"
+        or str(row.get("expected_answer", "")).lstrip().startswith(
+            "[short]"
+        )
+    ]
+    completions = [_last_assistant_completion(row) for row in short_rows]
+    queries = [str(row.get("query", "")) for row in short_rows]
+    expected = [
+        str(row.get("expected_answer", ""))
+        for row in short_rows
+    ]
+    keyword_scores = qa_rule_reward_fn(
+        queries,
+        completions,
+        expected,
+    )
+    details = [
+        {
+            "row_index": row.get("row_index"),
+            "question_type": "short",
+            "query": query,
+            "expected_answer": answer,
+            "completion": completion,
+            "boxed_present": extract_boxed(completion) is not None,
+            "stored_reward": row.get("reward"),
+            "legacy_keyword_reward": float(keyword_score),
+            "semantic_judge_score": None,
+            "runtime_judge_reward": None,
+            "runtime_reward_source": None,
+            "search_count": int(row.get("search_count", 0)),
+            "protocol_error": bool(row.get("protocol_error", False)),
+        }
+        for row, query, answer, completion, keyword_score in zip(
+            short_rows,
+            queries,
+            expected,
+            completions,
+            keyword_scores,
+            strict=True,
+        )
+    ]
+    summary["short_completion_count"] = len(short_rows)
+    summary["count_matches_expected"] = (
+        len(short_rows) == EXPECTED_STEP50_SHORT_COMPLETIONS
+    )
+    summary["legacy_keyword_reward"] = _score_summary(keyword_scores)
+    summary["single_keypoint_reference_count"] = sum(
+        len(
+            [
+                point
+                for point in answer.split("]", 1)[-1].split("|||")
+                if point.strip()
+            ]
+        )
+        == 1
+        for answer in expected
+    )
+    summary["degenerate_code_reference_count"] = sum(
+        answer.strip() == "[short] 代码"
+        for answer in expected
+    )
+    for detail in details:
+        detail["expected_is_degenerate_code"] = (
+            str(detail["expected_answer"]).strip() == "[short] 代码"
+        )
+
+    if not bool(endpoint_probe.get("available")):
+        _record_keyword_fallback(
+            summary,
+            details,
+            keyword_scores,
+        )
+        summary["status"] = "skipped"
+        summary["fallback_root_cause"] = (
+            endpoint_probe.get("fallback_root_cause")
+            or "judge_endpoint_unavailable"
+        )
+        return summary, details
+
+    try:
+        concurrency = int(os.environ.get("JUDGE_CONCURRENCY", "16"))
+    except ValueError:
+        _record_keyword_fallback(
+            summary,
+            details,
+            keyword_scores,
+        )
+        summary["status"] = "skipped"
+        summary["fallback_root_cause"] = "invalid_judge_concurrency"
+        return summary, details
+    if concurrency <= 0:
+        _record_keyword_fallback(
+            summary,
+            details,
+            keyword_scores,
+        )
+        summary["status"] = "skipped"
+        summary["fallback_root_cause"] = "invalid_judge_concurrency"
+        return summary, details
+
+    jobs = list(zip(queries, completions, expected, strict=True))
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        semantic_scores = list(
+            executor.map(
+                lambda job: judge_short_answer_score(*job),
+                jobs,
+            )
+        )
+
+    valid_semantic_scores = [
+        float(score)
+        for score in semantic_scores
+        if score is not None
+    ]
+    runtime_scores = []
+    deltas = []
+    for detail, semantic_score, keyword_score in zip(
+        details,
+        semantic_scores,
+        keyword_scores,
+        strict=True,
+    ):
+        detail["semantic_judge_score"] = semantic_score
+        if not detail["boxed_present"]:
+            runtime_score = FORMAT_PENALTY
+            reward_source = "format_penalty"
+        elif semantic_score is None:
+            runtime_score = float(keyword_score)
+            reward_source = "keyword_fallback"
+        else:
+            runtime_score = float(semantic_score)
+            reward_source = "semantic_judge"
+        detail["runtime_judge_reward"] = runtime_score
+        detail["runtime_reward_source"] = reward_source
+        runtime_scores.append(float(runtime_score))
+        deltas.append(float(runtime_score) - float(keyword_score))
+
+    failure_count = len(semantic_scores) - len(valid_semantic_scores)
+    summary["semantic_judge_score"] = {
+        **_score_summary(valid_semantic_scores),
+        "attempted_count": len(semantic_scores),
+        "failure_count": failure_count,
+    }
+    summary["runtime_judge_reward"] = _score_summary(runtime_scores)
+    summary["comparison"] = {
+        "gain_count": sum(delta > 1e-9 for delta in deltas),
+        "loss_count": sum(delta < -1e-9 for delta in deltas),
+        "unchanged_count": sum(abs(delta) <= 1e-9 for delta in deltas),
+    }
+    summary["status"] = "completed" if not failure_count else "partial"
+    if failure_count:
+        summary["fallback_root_cause"] = (
+            f"semantic_request_failure_count:{failure_count}"
+        )
+    return summary, details
 
 
 def _sha256(path: Path) -> str:
@@ -620,6 +870,12 @@ def main() -> None:
     v1_manifest_path = Path(
         os.environ.get("QA_SFT_V1_MANIFEST", str(DEFAULT_V1_MANIFEST))
     )
+    step50_trajectories_path = Path(
+        os.environ.get(
+            "QA_STEP50_TRAJECTORIES",
+            str(DEFAULT_STEP50_TRAJECTORIES),
+        )
+    )
     data_dir = Path(os.environ.get("QA_RL_DATA_DIR", "/data/datasets/qa_rl"))
     docs_dir = Path(os.environ.get("QA_DOCS_DIR", "/data/docs"))
     validation_path = data_dir / "val.jsonl"
@@ -630,6 +886,24 @@ def main() -> None:
     ]
     if missing:
         raise FileNotFoundError(f"missing fill-only audit inputs: {missing}")
+
+    judge_endpoint_probe = probe_judge_endpoint()
+    judge_reevaluation, judge_reevaluation_rows = (
+        _step50_short_judge_reevaluation(
+            step50_trajectories_path,
+            judge_endpoint_probe,
+        )
+    )
+    print(
+        "[fill-only-audit] judge endpoint probe "
+        + json.dumps(judge_endpoint_probe, ensure_ascii=False),
+        flush=True,
+    )
+    print(
+        "[fill-only-audit] step50 short judge reevaluation "
+        + json.dumps(judge_reevaluation, ensure_ascii=False),
+        flush=True,
+    )
 
     v1_records = _read_jsonl(v1_manifest_path)
     official_rows = _read_jsonl(validation_path)
@@ -697,6 +971,9 @@ def main() -> None:
         "representative_rejections": (
             output_dir / "representative_fill_rejections.jsonl"
         ),
+        "step50_short_judge_reevaluation": (
+            output_dir / "step50_short_judge_reevaluation.jsonl"
+        ),
         "summary": output_dir / "summary.json",
     }
     _write_jsonl(paths["accepted_manifest"], accepted)
@@ -720,6 +997,10 @@ def main() -> None:
         paths["representative_rejections"],
         representative_rejections,
     )
+    _write_jsonl(
+        paths["step50_short_judge_reevaluation"],
+        judge_reevaluation_rows,
+    )
 
     token_lengths = [
         int(record["_audit"]["token_length"])
@@ -735,7 +1016,10 @@ def main() -> None:
                 official_fingerprints
             ),
             "docs": str(docs_dir),
+            "step50_trajectories": str(step50_trajectories_path),
         },
+        "judge_endpoint_probe": judge_endpoint_probe,
+        "step50_short_judge_reevaluation": judge_reevaluation,
         "source_counts": source_stats,
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),

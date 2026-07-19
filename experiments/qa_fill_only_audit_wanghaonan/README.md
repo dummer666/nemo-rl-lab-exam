@@ -15,6 +15,11 @@ The experiment:
   two-hop result plus a deterministic random sample of 20 other results.
 - reports the isolated single/multiple/bool replay capacity and the balanced
   25%-35% selection size as informational metadata only.
+- safely probes the injected Judge endpoint without emitting its URL or API
+  key, and records `/models` status/latency/model IDs plus one synthetic score;
+- when that probe succeeds, re-scores the existing 22 step-50 short
+  completions beside their legacy keyword rewards. Probe failure is recorded
+  as a sanitized fallback cause and does not stop the fill audit.
 
 It does not read short-answer rebuild outputs, bypass the joint pack gate, or
 start training. Even when the machine gate passes, every record remains
