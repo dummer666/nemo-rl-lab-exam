@@ -197,9 +197,31 @@ def main() -> None:
         PACK_ROOT / "objective_train_manifest.jsonl",
         PACK_ROOT / "objective_validation_manifest.jsonl",
     )
-    extra_exclusion_paths = tuple(
+    configured_exclusion_paths = tuple(
         Path(str(path))
         for path in config.data.get("excluded_manifest_paths", [])
+    )
+    exclusion_roots = tuple(
+        Path(str(path))
+        for path in config.data.get("excluded_manifest_roots", [])
+    )
+    missing_roots = [str(path) for path in exclusion_roots if not path.is_dir()]
+    if missing_roots:
+        raise FileNotFoundError(
+            f"missing objective GRPO exclusion roots: {missing_roots}"
+        )
+    discovered_exclusion_paths = []
+    for root in exclusion_roots:
+        matches = sorted(root.rglob("curriculum.jsonl"))
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"expected one curriculum.jsonl under {root}, "
+                f"found {len(matches)}: {matches}"
+            )
+        discovered_exclusion_paths.extend(matches)
+    extra_exclusion_paths = (
+        *configured_exclusion_paths,
+        *discovered_exclusion_paths,
     )
     required = [
         CLEAN_TRAIN_PATH,

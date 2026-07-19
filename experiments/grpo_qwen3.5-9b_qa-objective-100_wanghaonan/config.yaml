@@ -55,8 +55,8 @@ data:
   output_key: expected_answer
   system_prompt: null
   data_dir: /data/datasets/qa_rl
-  excluded_manifest_paths:
-    - /shared/outputs/wanghaonan/grpo_qwen3.5-9b_qa-objective-short_wanghaonan/grpo_qwen3.5-9b_qa-objective-short_wanghaonan-wanghaonan-20260719-132128/objective_grpo_audit/curriculum.jsonl
+  excluded_manifest_roots:
+    - /shared/outputs/wanghaonan/grpo_qwen3.5-9b_qa-objective-short_wanghaonan/grpo_qwen3.5-9b_qa-objective-short_wanghaonan-wanghaonan-20260719-132128
 
 env:
   _override_: true
