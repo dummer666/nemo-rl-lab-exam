@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from common.retrieval.evidence import normalize_evidence_text  # noqa: E402
+from common.retrieval.markdown_bm25 import question_context  # noqa: E402
 from common.retrieval.qa_sft import (  # noqa: E402
     build_objective_messages,
     canonical_answer,
@@ -51,6 +52,12 @@ MAX_TOKENS = 3072
 SEED = 191
 OBJECTIVE_TYPES = tuple(TRAIN_TARGETS)
 _ANSWER_LETTER = re.compile(r"[A-Z]")
+_OPTION = re.compile(r"^\s*([A-Z])\.\s*(.+?)\s*$", re.MULTILINE)
+_ALL_ABOVE = re.compile(r"^(?:以上|上述).*(?:都是|都对|均正确|全[部都]?正确)$")
+_METADATA_OPTION = re.compile(
+    r"^(?:较难|困难|难|中等|简单|容易|答案|解析|无|未知)$",
+    re.IGNORECASE,
+)
 
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -96,6 +103,26 @@ def _stable_key(seed: int, fingerprint: str) -> str:
     return hashlib.sha256(f"{seed}:{fingerprint}".encode()).hexdigest()
 
 
+def objective_quality_issues(query: str) -> list[str]:
+    issues = []
+    options = _OPTION.findall(str(query))
+    normalized_options = [
+        normalize_evidence_text(text) for _letter, text in options
+    ]
+    if len(normalized_options) != len(set(normalized_options)):
+        issues.append("duplicate_option_text")
+    if any(_METADATA_OPTION.fullmatch(text.strip()) for _letter, text in options):
+        issues.append("metadata_option")
+    if any(
+        _ALL_ABOVE.fullmatch(text.strip()) and index != len(options) - 1
+        for index, (_letter, text) in enumerate(options)
+    ):
+        issues.append("all_above_not_last")
+    if len(normalize_evidence_text(question_context(query))) < 6:
+        issues.append("question_too_short")
+    return issues
+
+
 def _objective_candidates(
     rows: Sequence[Mapping[str, Any]],
     official_fingerprints: set[str],
@@ -112,6 +139,11 @@ def _objective_candidates(
             continue
         if question_type not in OBJECTIVE_TYPES:
             rejection_counts["not_objective"] += 1
+            continue
+        quality_issues = objective_quality_issues(query)
+        if quality_issues:
+            for issue in quality_issues:
+                rejection_counts[f"quality:{issue}"] += 1
             continue
         fingerprint = question_fingerprint(query)
         if fingerprint in official_fingerprints:

@@ -61,3 +61,21 @@ def test_profile_separates_objective_and_retrieval_rows():
         "objective:single": 1,
         "retrieval:1": 1,
     }
+
+
+def test_objective_quality_rejects_metadata_after_all_above():
+    query = (
+        "题目：有哪些系统？\n"
+        "A. GMS\nB. CCTV\nC. VESDA\nD. 以上都是\nE. 较难"
+    )
+
+    assert run.objective_quality_issues(query) == [
+        "metadata_option",
+        "all_above_not_last",
+    ]
+
+
+def test_objective_quality_accepts_normal_options():
+    query = "题目：正确的是？\nA. 第一项\nB. 第二项\nC. 以上都是"
+
+    assert run.objective_quality_issues(query) == []
