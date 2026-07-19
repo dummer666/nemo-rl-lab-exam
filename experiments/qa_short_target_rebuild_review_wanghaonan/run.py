@@ -6,10 +6,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+THIS_DIR = Path(__file__).resolve().parent
+REPO_ROOT = THIS_DIR.parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from common.retrieval.qa_target_rebuild import extract_json_object  # noqa: E402
 
 DEFAULT_REBUILD_DIR = Path(
     "/shared/outputs/wanghaonan/qa_short_target_rebuild_wanghaonan/"
@@ -78,6 +86,36 @@ def _selected_generation_attempts(
         for row in generation_rows
         if int(row["source_row_id"]) == source_row_id
     ]
+
+
+def _verifier_failure_categories(
+    payload: Mapping[str, Any] | None,
+    point_count: int,
+) -> list[str]:
+    if payload is None:
+        return ["invalid_json"]
+
+    categories = []
+    if payload.get("decision") != "reject":
+        categories.append("invalid_decision")
+    if payload.get("complete") is not True:
+        categories.append("incomplete")
+
+    checks = payload.get("point_checks")
+    if not isinstance(checks, list) or len(checks) != point_count:
+        categories.append("point_check_count")
+        return categories
+    if any(
+        not isinstance(check, Mapping) or check.get("supported") is not True
+        for check in checks
+    ):
+        categories.append("unsupported_point")
+    if any(
+        not isinstance(check, Mapping) or check.get("relevant") is not True
+        for check in checks
+    ):
+        categories.append("irrelevant_point")
+    return categories or ["invalid_reject_schema"]
 
 
 def _build_report(
@@ -168,6 +206,34 @@ def _build_report(
         for row in generation_rows
         if row.get("deterministic_decision") == "accepted"
     )
+    verifier_failure_counts: Counter[str] = Counter()
+    verifier_rejections = []
+    for row in generation_rows:
+        if (
+            row.get("deterministic_decision") != "accepted"
+            or row.get("verifier_accept") is True
+        ):
+            continue
+        points = row.get("points")
+        point_count = len(points) if isinstance(points, list) else 0
+        verifier_raw = str(row.get("verifier_raw", ""))
+        verifier_payload = extract_json_object(verifier_raw)
+        categories = _verifier_failure_categories(
+            verifier_payload,
+            point_count,
+        )
+        verifier_failure_counts.update(categories)
+        verifier_rejections.append(
+            {
+                "source_row_id": row.get("source_row_id"),
+                "candidate_index": row.get("candidate_index"),
+                "query": row.get("query"),
+                "points": points,
+                "failure_categories": categories,
+                "verifier_payload": verifier_payload,
+                "verifier_raw": verifier_raw[:2000],
+            }
+        )
     generation_examples = []
     seen_generation_decisions = set()
     for row in generation_rows:
@@ -204,6 +270,10 @@ def _build_report(
         "accepted_targets": accepted,
         "generation_decision_counts": dict(sorted(generation_counts.items())),
         "independent_verifier_counts": dict(sorted(verifier_counts.items())),
+        "independent_verifier_failure_counts": dict(
+            sorted(verifier_failure_counts.items())
+        ),
+        "independent_verifier_rejections": verifier_rejections,
         "representative_generation_failures": generation_examples,
         "rejection_counts": dict(sorted(rejection_counts.items())),
         "representative_rejections": rejection_examples,

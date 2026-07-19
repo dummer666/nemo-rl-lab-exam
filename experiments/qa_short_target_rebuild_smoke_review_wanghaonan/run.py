@@ -12,7 +12,7 @@ os.environ.setdefault(
     (
         "/shared/outputs/wanghaonan/"
         "qa_short_target_rebuild_smoke_wanghaonan/"
-        "qa_short_target_rebuild_smoke_wanghaonan-wanghaonan-20260718-191219/"
+        "qa_short_target_rebuild_smoke_wanghaonan-wanghaonan-20260718-192746/"
         "short_target_rebuild"
     ),
 )
