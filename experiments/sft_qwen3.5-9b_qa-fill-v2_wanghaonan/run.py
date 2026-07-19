@@ -13,16 +13,27 @@ from pathlib import Path
 from typing import Any
 
 MODEL_PATH = Path(
-    "/shared/outputs/wanghaonan/sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan/"
-    "sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan-wanghaonan-20260718-130828/"
-    "hf_export/step_50"
+    os.environ.get(
+        "QA_FILL_SFT_MODEL_PATH",
+        "/shared/outputs/wanghaonan/sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan/"
+        "sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan-wanghaonan-20260718-130828/"
+        "hf_export/step_50",
+    )
 )
 TRAIN_PATH = Path(
-    "/shared/outputs/wanghaonan/qa_fill_sft_pilot_data_wanghaonan/"
-    "qa_fill_sft_pilot_data_wanghaonan-wanghaonan-20260719-032625/"
-    "fill_sft_pilot_data/fill_pilot_train.jsonl"
+    os.environ.get(
+        "QA_FILL_SFT_TRAIN_PATH",
+        "/shared/outputs/wanghaonan/qa_fill_sft_pilot_data_wanghaonan/"
+        "qa_fill_sft_pilot_data_wanghaonan-wanghaonan-20260719-032625/"
+        "fill_sft_pilot_data/fill_pilot_train.jsonl",
+    )
 )
-VALIDATION_PATH = TRAIN_PATH.with_name("fill_pilot_validation.jsonl")
+VALIDATION_PATH = Path(
+    os.environ.get(
+        "QA_FILL_SFT_VALIDATION_PATH",
+        str(TRAIN_PATH.with_name("fill_pilot_validation.jsonl")),
+    )
+)
 PASSTHROUGH_CHAT_TEMPLATE = (
     "{% for message in messages %}{{ message['content'] }}{% endfor %}"
 )
@@ -31,6 +42,23 @@ EXPECTED_PROFILES = {
     "train": {0: 15, 1: 31, 2: 7},
     "validation": {0: 6, 1: 4, 2: 1},
 }
+
+
+def expected_profiles() -> dict[str, dict[int, int]]:
+    raw = os.environ.get("QA_FILL_SFT_EXPECTED_PROFILES")
+    if not raw:
+        return EXPECTED_PROFILES
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("QA_FILL_SFT_EXPECTED_PROFILES must be a JSON object")
+    return {
+        str(split): {
+            int(turns): int(count)
+            for turns, count in profile.items()
+        }
+        for split, profile in value.items()
+        if isinstance(profile, dict)
+    }
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -144,9 +172,10 @@ def _run_sft_preflight() -> None:
         "train": dataset_profile(train_rows),
         "validation": dataset_profile(validation_rows),
     }
-    if profiles != EXPECTED_PROFILES:
+    expected = expected_profiles()
+    if profiles != expected:
         raise RuntimeError(
-            f"fill SFT data profile changed: expected={EXPECTED_PROFILES}, actual={profiles}"
+            f"fill SFT data profile changed: expected={expected}, actual={profiles}"
         )
 
     import torch

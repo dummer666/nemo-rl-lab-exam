@@ -1,0 +1,24 @@
+# Three-epoch fill SFT with stronger two-hop exposure.
+defaults:
+  - ../../configs/base/sft.yaml
+  - ../../configs/models/qwen3.5-9b.yaml
+  - ../../configs/qa_fill_sft_v3.yaml
+
+sft:
+  max_num_epochs: 3
+  max_num_steps: 60
+  val_period: 20
+  val_batches: 3
+  val_global_batch_size: 4
+  val_micro_batch_size: 1
+  val_at_start: true
+  val_at_end: true
+  seed: 84
+  only_unmask_final: false
+
+checkpointing:
+  metric_name: "val:val_loss"
+  higher_is_better: false
+  keep_top_k: 3
+  save_period: 20
+  save_optimizer: true

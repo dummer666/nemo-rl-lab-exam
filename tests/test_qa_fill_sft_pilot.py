@@ -55,3 +55,16 @@ def test_dataset_profile_rejects_invalid_runtime_roles():
                 }
             ]
         )
+
+
+def test_expected_profiles_can_be_overridden(monkeypatch):
+    monkeypatch.setenv(
+        "QA_FILL_SFT_EXPECTED_PROFILES",
+        '{"train":{"0":24,"1":31,"2":28},'
+        '"validation":{"0":6,"1":4,"2":1}}',
+    )
+
+    assert run.expected_profiles() == {
+        "train": {0: 24, 1: 31, 2: 28},
+        "validation": {0: 6, 1: 4, 2: 1},
+    }
