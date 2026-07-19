@@ -420,6 +420,9 @@ def main() -> None:
             "objective_train_manifest": str(
                 output_dir / "objective_train_manifest.jsonl"
             ),
+            "objective_validation_manifest": str(
+                output_dir / "objective_validation_manifest.jsonl"
+            ),
             "review_sample": str(output_dir / "review_sample.jsonl"),
         },
     }
@@ -428,6 +431,10 @@ def main() -> None:
     _write_jsonl(
         output_dir / "objective_train_manifest.jsonl",
         objective_train,
+    )
+    _write_jsonl(
+        output_dir / "objective_validation_manifest.jsonl",
+        objective_validation,
     )
     _write_jsonl(output_dir / "review_sample.jsonl", review_sample)
     (output_dir / "summary.json").write_text(
