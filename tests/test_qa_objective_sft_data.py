@@ -79,3 +79,13 @@ def test_objective_quality_accepts_normal_options():
     query = "题目：正确的是？\nA. 第一项\nB. 第二项\nC. 以上都是"
 
     assert run.objective_quality_issues(query) == []
+
+
+def test_objective_quality_rejects_mislabeled_single_answer_multiple():
+    query = "题目：正确的是？\nA. 第一项\nB. 第二项"
+
+    assert run.objective_quality_issues(
+        query,
+        question_type="multiple",
+        expected_answer="[multiple] B",
+    ) == ["multiple_single_answer"]

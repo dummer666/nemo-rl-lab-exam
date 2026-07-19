@@ -55,7 +55,7 @@ _ANSWER_LETTER = re.compile(r"[A-Z]")
 _OPTION = re.compile(r"^\s*([A-Z])\.\s*(.+?)\s*$", re.MULTILINE)
 _ALL_ABOVE = re.compile(r"^(?:以上|上述).*(?:都是|都对|均正确|全[部都]?正确)$")
 _METADATA_OPTION = re.compile(
-    r"^(?:较难|困难|难|中等|简单|容易|答案|解析|无|未知)$",
+    r"^(?:较难|困难|难|中等|一般|简单|容易|答案|解析|无|未知)$",
     re.IGNORECASE,
 )
 
@@ -103,7 +103,11 @@ def _stable_key(seed: int, fingerprint: str) -> str:
     return hashlib.sha256(f"{seed}:{fingerprint}".encode()).hexdigest()
 
 
-def objective_quality_issues(query: str) -> list[str]:
+def objective_quality_issues(
+    query: str,
+    question_type: str | None = None,
+    expected_answer: str | None = None,
+) -> list[str]:
     issues = []
     options = _OPTION.findall(str(query))
     normalized_options = [
@@ -118,6 +122,19 @@ def objective_quality_issues(query: str) -> list[str]:
         for index, (_letter, text) in enumerate(options)
     ):
         issues.append("all_above_not_last")
+    if question_type == "single" and len(options) >= 6:
+        issues.append("single_too_many_options")
+    if (
+        question_type == "multiple"
+        and expected_answer is not None
+        and len(
+            _ANSWER_LETTER.findall(
+                expected_answer.split("]", 1)[-1].upper()
+            )
+        )
+        == 1
+    ):
+        issues.append("multiple_single_answer")
     if len(normalize_evidence_text(question_context(query))) < 6:
         issues.append("question_too_short")
     return issues
@@ -140,7 +157,11 @@ def _objective_candidates(
         if question_type not in OBJECTIVE_TYPES:
             rejection_counts["not_objective"] += 1
             continue
-        quality_issues = objective_quality_issues(query)
+        quality_issues = objective_quality_issues(
+            query,
+            question_type,
+            expected,
+        )
         if quality_issues:
             for issue in quality_issues:
                 rejection_counts[f"quality:{issue}"] += 1
