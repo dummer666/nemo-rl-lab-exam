@@ -52,10 +52,10 @@ TARGETS = {
     "train": {"one_hop": 160, "two_hop": 120},
     "validation": {"one_hop": 20, "two_hop": 20},
 }
-OBJECTIVE_TRAIN_PER_TYPE = 24
-OBJECTIVE_REPEAT_PER_TYPE = 8
+OBJECTIVE_TRAIN_PER_TYPE = 23
+OBJECTIVE_REPEAT_PER_TYPE = 9
 OBJECTIVE_VALIDATION_PER_TYPE = 2
-POOL_TARGETS = {"train": 700, "validation": 140}
+POOL_TARGETS = {"train": 500, "validation": 100}
 MAX_RAW_CANDIDATES = 16000
 MAX_CANDIDATES_PER_SOURCE = 3
 TRAIN_MAX_TOKENS = 3072
@@ -702,12 +702,34 @@ def main() -> None:
         b=0.75,
     )
     index_seconds = time.perf_counter() - index_start
+    print(
+        f"[grounded-cloze-data] indexed={index.num_documents} "
+        f"seconds={index_seconds:.1f}",
+        flush=True,
+    )
     tokenizer = _load_tokenizer()
+    objective_train, objective_validation, objective_available = (
+        _objective_replay(tokenizer, official_fingerprints)
+    )
+    print(
+        f"[grounded-cloze-data] objective train={len(objective_train)} "
+        f"validation={len(objective_validation)}",
+        flush=True,
+    )
     raw_candidates, extraction_reasons = _extract_raw_candidates(index)
+    print(
+        f"[grounded-cloze-data] raw_candidates={len(raw_candidates)}",
+        flush=True,
+    )
     pools, pool_reasons = _validated_pools(
         index,
         raw_candidates,
         tokenizer,
+    )
+    print(
+        f"[grounded-cloze-data] pools="
+        f"{ {split: len(rows) for split, rows in pools.items()} }",
+        flush=True,
     )
 
     fill_by_split: dict[str, list[dict[str, Any]]] = {}
@@ -725,10 +747,11 @@ def main() -> None:
         )
         pair_reasons.update(reasons)
         fill_by_split[split] = [*one_hop, *two_hop]
-
-    objective_train, objective_validation, objective_available = (
-        _objective_replay(tokenizer, official_fingerprints)
-    )
+        print(
+            f"[grounded-cloze-data] split={split} "
+            f"one_hop={len(one_hop)} two_hop={len(two_hop)}",
+            flush=True,
+        )
     train_fill = fill_by_split["train"]
     validation_fill = fill_by_split["validation"]
     train = [*train_fill, *objective_train]
