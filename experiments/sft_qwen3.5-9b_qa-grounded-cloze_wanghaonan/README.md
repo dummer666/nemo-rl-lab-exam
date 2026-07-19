@@ -7,7 +7,7 @@ One conservative epoch from the merged retrieval-SFT step 50 model.
 - 96 balanced objective replay trajectories.
 - Fresh LoRA rank 8 / alpha 16 at learning rate `3e-6`.
 - Global batch 4, maximum length 3072, and 94 optimizer steps.
-- Validation and checkpoints around steps 31, 62, and 93.
+- Validation checkpoints at steps 31 and 62, plus the final step 94.
 
 The semantic critic only filters candidates. Gold answers remain exact reference
 spans, and every retained trajectory passes the deterministic retrieval and

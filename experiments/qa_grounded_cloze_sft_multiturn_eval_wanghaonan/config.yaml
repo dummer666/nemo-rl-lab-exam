@@ -1,0 +1,29 @@
+# Fair current-protocol evaluation of baseline and grounded cloze checkpoints.
+defaults:
+  - ../../configs/base/grpo_math_1B.yaml
+  - ../../configs/models/qwen3.5-9b.yaml
+  - ../../configs/base/grpo_megatron.yaml
+  - ../../configs/base/grpo_lora.yaml
+
+policy:
+  model_name: "Qwen/Qwen3.5-9B"
+  tokenizer:
+    name: "Qwen/Qwen3.5-9B"
+  train_global_batch_size: 1
+  generation_batch_size: 16
+
+grpo:
+  num_prompts_per_step: 1
+  num_generations_per_prompt: 1
+  max_num_steps: 1
+
+data:
+  input_key: query
+  output_key: expected_answer
+  data_dir: /data/datasets/qa_rl
+
+logger:
+  wandb_enabled: false
+  tensorboard_enabled: false
+  swanlab_enabled: false
+  monitor_gpus: true
