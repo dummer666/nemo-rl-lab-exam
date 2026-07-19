@@ -83,7 +83,7 @@ _SEMANTIC_PREDICATE = re.compile(
     r"calculates?|loads?|contains?|consists?|defined|requires?|records?)\b",
     re.IGNORECASE,
 )
-_BULLET_PREFIX = re.compile(r"^\s*[–—•●▪►✓]\s*")
+_BULLET_PREFIX = re.compile(r"^\s*(?:-\s+|[–—•●▪►✓]\s*)")
 _COMPLETE_SENTENCE_END = re.compile(r"[。！？!?.)）\]】]$")
 _DISCOURSE_FRAGMENT = re.compile(r"^(?:其次|上表中|如下|上述)")
 _NUMBERED_ENGLISH_FRAGMENT = re.compile(r"^\s*\d+(?:[.)]\s*|(?=[A-Z]))")
@@ -94,6 +94,10 @@ _OPERATION_FRAGMENT = re.compile(
 )
 _SHIFT_LOG_FRAGMENT = re.compile(
     r"\b(?:suffer|follow|rework)\b|值班|写case",
+    re.IGNORECASE,
+)
+_ACKNOWLEDGEMENT_FRAGMENT = re.compile(
+    r"感谢.*(?:资助|支持)|\b(?:acknowledg|funded\s+by|supported\s+by)\b",
     re.IGNORECASE,
 )
 _ENGLISH_PREDICATE_FRAGMENT = re.compile(
@@ -237,6 +241,8 @@ def candidate_quality_issues(
         issues.append("button_or_operation_fragment")
     if _SHIFT_LOG_FRAGMENT.search(sentence):
         issues.append("shift_log_fragment")
+    if _ACKNOWLEDGEMENT_FRAGMENT.search(sentence):
+        issues.append("acknowledgement_fragment")
     if _ENGLISH_PREDICATE_FRAGMENT.search(sentence):
         issues.append("english_predicate_fragment")
     if (

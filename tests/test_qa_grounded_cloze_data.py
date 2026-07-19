@@ -80,6 +80,16 @@ def test_candidate_quality_rejects_slide_and_table_fragments():
         "4个",
         "numeric_unit",
     )
+    assert "slide_bullet_fragment" in run.candidate_quality_issues(
+        "- It is required that the EBR cut width has been measured.",
+        "EBR",
+        "acronym",
+    )
+    assert "acknowledgement_fragment" in run.candidate_quality_issues(
+        "感谢 MARCO 和 DARPA 联合资助的研究中心对作者的长期支持。",
+        "MARCO",
+        "acronym",
+    )
 
 
 def test_candidate_quality_keeps_complete_technical_statements():
