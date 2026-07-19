@@ -29,6 +29,32 @@ def test_source_split_is_deterministic():
     assert run._source_split(source) == run._source_split(source)
 
 
+def test_candidate_quality_rejects_slide_and_table_fragments():
+    assert "boilerplate_or_slide_noise" in run.candidate_quality_issues(
+        r"-- Slide number: 1 -->\nEVG MBDS manual SOP",
+        "MBDS",
+        "acronym",
+    )
+    assert "table_fragment" in run.candidate_quality_issues(
+        "| 1 | E3000399 | PAC | 卡 |",
+        "E3000399",
+        "acronym",
+    )
+
+
+def test_candidate_quality_keeps_complete_technical_statements():
+    assert run.candidate_quality_issues(
+        "系统通过挖掘 FDC 数据中的有效信息来解决设备问题并提升整体效能。",
+        "FDC",
+        "acronym",
+    ) == []
+    assert run.candidate_quality_issues(
+        "二次电子产生深度通常小于 10nm，因此主要反映试样表面信息。",
+        "10nm",
+        "numeric_unit",
+    ) == []
+
+
 def test_pair_rejects_answer_cross_leakage():
     first = {
         "source": "a.md",

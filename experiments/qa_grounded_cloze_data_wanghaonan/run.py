@@ -73,6 +73,26 @@ _ACRONYM = re.compile(
 )
 _QUOTED = re.compile(r"[“\"]([\u3400-\u4dbf\u4e00-\u9fff]{2,12})[”\"]")
 _SPACE = re.compile(r"\s+")
+_CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_ENGLISH_WORD = re.compile(r"\b[A-Za-z]{2,}\b")
+_SEMANTIC_PREDICATE = re.compile(
+    r"是|为|指|称为|叫做|用于|用来|通过|控制|表示|检测|测量|"
+    r"计算|定义|包括|小于|大于|不超过|不少于|范围|厚度|温度|"
+    r"精度|浓度|时间|距离|产生|形成|实现|负责|管理|记录|解决|"
+    r"\b(?:is|are|means|stands\s+for|used|controls?|measures?|"
+    r"calculates?|loads?|contains?|consists?|defined|requires?|records?)\b",
+    re.IGNORECASE,
+)
+_STRUCTURED_DEFINITION = re.compile(
+    r"[（(][A-Z][A-Z0-9+./-]{2,14}[）)]|"
+    r"[A-Z][A-Z0-9+./-]{2,14}[（(][^）)]{2,40}[）)]"
+)
+_CONTENT_NOISE = re.compile(
+    r"slide\s+number|###\s*notes|<!--|<html|copyright|all\s+rights|"
+    r"prior\s+consent|own\s+risk|equivalent\s+to\s+rev|"
+    r"new\s+york.*london|\\n",
+    re.IGNORECASE,
+)
 _BANNED_SOURCE = re.compile(
     r"试题|试卷|考题|题库|考试|练习题|测验|答案|certify|quiz|exam",
     re.IGNORECASE,
@@ -86,6 +106,14 @@ _BANNED_ANSWERS = {
     "item",
     "system",
     "server",
+    "new",
+    "note",
+    "page",
+    "pac",
+    "pdf",
+    "rev",
+    "sop",
+    "pe",
     "yes",
     "no",
 }
@@ -167,6 +195,49 @@ def _answer_candidates(sentence: str) -> list[tuple[str, str]]:
     return accepted
 
 
+def candidate_quality_issues(
+    sentence: str,
+    answer: str,
+    answer_kind: str,
+) -> list[str]:
+    issues = []
+    if _CONTENT_NOISE.search(sentence):
+        issues.append("boilerplate_or_slide_noise")
+    if sentence.count("|") >= 2 or sentence.count("\t") >= 2:
+        issues.append("table_fragment")
+    if sentence.lstrip().startswith(("--", "<", "|")):
+        issues.append("markup_fragment")
+    if len(_CJK.findall(sentence)) < 10 and len(_ENGLISH_WORD.findall(sentence)) < 8:
+        issues.append("insufficient_sentence_context")
+    if (
+        not _SEMANTIC_PREDICATE.search(sentence)
+        and not _STRUCTURED_DEFINITION.search(sentence)
+    ):
+        issues.append("missing_semantic_predicate")
+
+    normalized_answer = normalize_evidence_text(answer)
+    if answer_kind == "acronym":
+        if not re.fullmatch(r"[A-Z]{3,10}", answer):
+            issues.append("code_like_acronym")
+        if normalized_answer in _BANNED_ANSWERS:
+            issues.append("generic_acronym")
+        position = sentence.lower().find(answer.lower())
+        if position >= 0:
+            adjacent = sentence[max(0, position - 1) : position + len(answer) + 1]
+            if adjacent.startswith("-") or adjacent.endswith("-"):
+                issues.append("hyphen_fragment")
+    elif answer_kind == "numeric_unit":
+        compact = answer.replace(" ", "")
+        if re.match(r"^0[1-9]\d*(?!\.)", compact):
+            issues.append("malformed_leading_zero")
+    elif answer_kind == "quoted_term" and not re.search(
+        r"是|为|指|称为|叫做|所谓|方法|工艺",
+        sentence,
+    ):
+        issues.append("ungrounded_quoted_term")
+    return sorted(set(issues))
+
+
 def _replace_case_insensitive(text: str, answer: str, replacement: str) -> str:
     return re.sub(re.escape(answer), replacement, text, count=1, flags=re.IGNORECASE)
 
@@ -216,6 +287,14 @@ def _extract_raw_candidates(
             ):
                 continue
             for answer_kind, answer in _answer_candidates(sentence):
+                quality_issues = candidate_quality_issues(
+                    sentence,
+                    answer,
+                    answer_kind,
+                )
+                if quality_issues:
+                    reason_counts.update(quality_issues)
+                    continue
                 masked = _replace_case_insensitive(sentence, answer, "【1】")
                 if normalize_evidence_text(answer) in normalize_evidence_text(masked):
                     reason_counts["answer_still_visible"] += 1

@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from common.retrieval.evidence import normalize_evidence_text
+from experiments.qa_grounded_cloze_data_wanghaonan.run import (
+    candidate_quality_issues,
+)
 
 PACK_ROOT = Path(
     "/shared/outputs/wanghaonan/qa_grounded_cloze_data_wanghaonan/"
@@ -97,6 +100,7 @@ def review_issues(row: Mapping[str, Any]) -> list[str]:
             issues.append("generic_english_token")
         if len(sentence) < 28:
             issues.append("sentence_fragment")
+        issues.extend(candidate_quality_issues(sentence, answer, kind))
     return sorted(set(issues))
 
 
