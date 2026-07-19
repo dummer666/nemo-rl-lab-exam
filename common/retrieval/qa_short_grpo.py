@@ -161,3 +161,108 @@ def build_short_grpo_curriculum(
     if leaked:
         raise ValueError(f"short-GRPO curriculum leaked SFT questions: {sorted(leaked)}")
     return curriculum
+
+
+def build_balanced_open_grpo_curriculum(
+    rl_holdout: Sequence[dict],
+    clean_rows: Sequence[dict],
+    trajectory_manifest: Sequence[dict],
+    *,
+    total_steps: int = 100,
+    prompts_per_step: int = 4,
+    seed: int = 42,
+) -> list[dict]:
+    """Mix two objective questions, one fill, and one short per step."""
+    if total_steps <= 0:
+        raise ValueError("total_steps must be positive")
+    if prompts_per_step != 4:
+        raise ValueError("balanced open GRPO requires four prompts per step")
+
+    sft_row_ids = {
+        int(row["row_id"])
+        for row in trajectory_manifest
+        if row.get("split") in {"train", "validation"}
+    }
+    holdout_ids = {_holdout_row_id(row) for row in rl_holdout}
+    overlap = sft_row_ids & holdout_ids
+    if overlap:
+        raise ValueError(
+            f"RL holdout overlaps SFT questions: {sorted(overlap)}"
+        )
+
+    objective = [
+        row
+        for row in clean_rows
+        if question_type(row) in _OBJECTIVE_TYPES
+        and _clean_row_id(row) not in sft_row_ids
+        and _clean_row_id(row) not in holdout_ids
+    ]
+    fill = [
+        row for row in rl_holdout if question_type(row) == "fill"
+    ]
+    short = [
+        row for row in rl_holdout if question_type(row) == "short"
+    ]
+    if len(fill) + len(short) != len(rl_holdout):
+        raise ValueError("RL holdout contains non-open questions")
+
+    rng = random.Random(seed)
+    pools = {
+        "objective": _Cycle(objective, rng, "objective"),
+        "fill": _Cycle(fill, rng, "fill"),
+        "short": _Cycle(short, rng, "short"),
+    }
+    curriculum = []
+    for step in range(1, total_steps + 1):
+        first_objective = pools["objective"].take()
+        second_objective = pools["objective"].take()
+        for _ in range(len(pools["objective"].rows)):
+            if _clean_row_id(second_objective) != _clean_row_id(
+                first_objective
+            ):
+                break
+            second_objective = pools["objective"].take()
+        else:
+            raise ValueError(
+                "not enough distinct objective questions for one batch"
+            )
+        selections = [
+            ("objective:0", first_objective),
+            ("objective:1", second_objective),
+            ("fill", pools["fill"].take()),
+            ("short", pools["short"].take()),
+        ]
+        for slot, row in selections:
+            if slot.startswith("objective"):
+                source_row_id = _clean_row_id(row)
+                minimum_searches = 0
+            else:
+                source_row_id = _holdout_row_id(row)
+                meta = (
+                    row.get("meta")
+                    if isinstance(row.get("meta"), dict)
+                    else {}
+                )
+                minimum_searches = max(
+                    1,
+                    min(2, int(meta.get("search_turns", 1))),
+                )
+            curriculum.append(
+                _annotate(
+                    row,
+                    step=step,
+                    slot=slot,
+                    source_row_id=source_row_id,
+                    minimum_searches=minimum_searches,
+                )
+            )
+
+    selected_ids = {
+        int(row["_curriculum"]["source_row_id"]) for row in curriculum
+    }
+    leaked = selected_ids & sft_row_ids
+    if leaked:
+        raise ValueError(
+            f"balanced open GRPO leaked SFT questions: {sorted(leaked)}"
+        )
+    return curriculum

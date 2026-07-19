@@ -1,0 +1,91 @@
+# Final 100-step gamble: 50% objective, 25% fill, 25% short.
+defaults:
+  - ../../configs/base/grpo_math_1B.yaml
+  - ../../configs/models/qwen3.5-9b.yaml
+  - ../../configs/base/grpo_megatron.yaml
+  - ../../configs/base/grpo_lora.yaml
+
+policy:
+  model_name: "/shared/outputs/wanghaonan/grpo_qwen3.5-9b_qa-objective-100_wanghaonan/grpo_qwen3.5-9b_qa-objective-100_wanghaonan-wanghaonan-20260719-141205/hf_export/step_80"
+  tokenizer:
+    name: ${policy.model_name}
+  max_total_sequence_length: 6144
+  train_global_batch_size: 32
+  generation_batch_size: 16
+  generation:
+    max_new_tokens: 768
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 10000
+  megatron_cfg:
+    peft:
+      dim: 8
+      alpha: 16
+    optimizer:
+      lr: 1.0e-6
+      min_lr: 1.0e-7
+    scheduler:
+      lr_warmup_iters: 5
+      lr_decay_iters: 100
+
+grpo:
+  num_prompts_per_step: 4
+  num_generations_per_prompt: 8
+  max_rollout_turns: 3
+  max_num_steps: 100
+  val_period: 10
+  val_at_start: true
+  val_at_end: true
+  max_val_samples: 313
+  val_batch_size: 32
+  overlong_filtering: true
+  use_dynamic_sampling: false
+  seed: 277
+
+loss_fn:
+  reference_policy_kl_penalty: 0.1
+
+checkpointing:
+  save_period: 10
+  keep_top_k: 10
+
+data:
+  shuffle: false
+  input_key: query
+  output_key: expected_answer
+  system_prompt: null
+  data_dir: /data/datasets/qa_rl
+  curriculum_mode: balanced_open
+
+env:
+  _override_: true
+  qa_retrieval:
+    cfg:
+      docs_dir: /data/docs
+      top_k: 4
+      candidate_k: 50
+      quality_rerank: true
+      quality_weights:
+        answer-bearing: 1.15
+        reference: 1.0
+        question-only: 0.45
+        noise: 0.1
+      chunk_chars: 1200
+      chunk_overlap_chars: 160
+      max_result_chars: 1800
+      per_result_chars: 360
+      bm25_k1: 1.5
+      bm25_b: 0.75
+      max_searches: 2
+      max_invalid_actions: 2
+      use_judge: false
+      evidence_reward_scale: 0.10
+      search_cost: 0.01
+      duplicate_query_penalty: 0.03
+
+logger:
+  wandb_enabled: false
+  tensorboard_enabled: false
+  swanlab_enabled: false
+  monitor_gpus: true
+  num_val_samples_to_print: 10

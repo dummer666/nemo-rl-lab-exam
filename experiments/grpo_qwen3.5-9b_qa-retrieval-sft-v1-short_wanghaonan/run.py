@@ -36,8 +36,10 @@ from common.environments.qa_retrieval_env import QARetrievalEnv  # noqa: E402
 from common.retrieval.qa_curriculum import question_type  # noqa: E402
 from common.retrieval.qa_sft import AGENT_INSTRUCTIONS, format_agent_prompt  # noqa: E402
 from common.retrieval.qa_short_grpo import (  # noqa: E402
+    build_balanced_open_grpo_curriculum,
     build_short_grpo_curriculum,
 )
+from common.retrieval.qa_target_rebuild import question_fingerprint  # noqa: E402
 
 TASK_NAME = "qa_retrieval"
 SFT_DATA_ROOT = Path(
@@ -178,19 +180,45 @@ def main() -> None:
     if missing:
         raise FileNotFoundError(f"Missing short-GRPO inputs: {missing}")
 
-    train_rows = build_short_grpo_curriculum(
-        _read_jsonl(SFT_DATA_ROOT / "rl_holdout.jsonl"),
-        _read_jsonl(CLEAN_TRAIN_PATH),
-        _read_jsonl(SFT_DATA_ROOT / "trajectory_manifest.jsonl"),
+    val_rows = _read_jsonl(val_path)
+    official_fingerprints = {
+        question_fingerprint(str(row["query"])) for row in val_rows
+    }
+    holdout_rows = [
+        row
+        for row in _read_jsonl(SFT_DATA_ROOT / "rl_holdout.jsonl")
+        if question_fingerprint(str(row["query"]))
+        not in official_fingerprints
+    ]
+    clean_rows = [
+        row
+        for row in _read_jsonl(CLEAN_TRAIN_PATH)
+        if question_fingerprint(str(row["query"]))
+        not in official_fingerprints
+    ]
+    curriculum_builder = (
+        build_balanced_open_grpo_curriculum
+        if config.data.get("curriculum_mode") == "balanced_open"
+        else build_short_grpo_curriculum
+    )
+    train_rows = curriculum_builder(
+        holdout_rows,
+        clean_rows,
+        _read_jsonl(
+            SFT_DATA_ROOT / "trajectory_manifest.jsonl"
+        ),
         total_steps=int(config.grpo["max_num_steps"]),
         prompts_per_step=int(config.grpo["num_prompts_per_step"]),
         seed=int(config.grpo["seed"]),
     )
-    val_rows = _read_jsonl(val_path)
     expected_rows = int(config.grpo["max_num_steps"]) * int(config.grpo["num_prompts_per_step"])
     if len(train_rows) != expected_rows:
         raise ValueError(f"curriculum produced {len(train_rows)} rows, expected {expected_rows}")
     audit = _curriculum_audit(train_rows)
+    audit["official_overlap"] = 0
+    audit["curriculum_mode"] = str(
+        config.data.get("curriculum_mode", "open_heavy")
+    )
     print(f"[short-grpo] curriculum={json.dumps(audit, ensure_ascii=False)}")
 
     config.logger["log_dir"] = get_next_experiment_dir(config.logger["log_dir"])
