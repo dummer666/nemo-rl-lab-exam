@@ -197,14 +197,27 @@ def main() -> None:
         PACK_ROOT / "objective_train_manifest.jsonl",
         PACK_ROOT / "objective_validation_manifest.jsonl",
     )
-    required = [CLEAN_TRAIN_PATH, official_path, *manifest_paths]
+    extra_exclusion_paths = tuple(
+        Path(str(path))
+        for path in config.data.get("excluded_manifest_paths", [])
+    )
+    required = [
+        CLEAN_TRAIN_PATH,
+        official_path,
+        *manifest_paths,
+        *extra_exclusion_paths,
+    ]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"missing objective GRPO inputs: {missing}")
     curriculum = _curriculum(
         _read_jsonl(CLEAN_TRAIN_PATH),
         _read_jsonl(official_path),
-        [row for path in manifest_paths for row in _read_jsonl(path)],
+        [
+            row
+            for path in (*manifest_paths, *extra_exclusion_paths)
+            for row in _read_jsonl(path)
+        ],
         total_steps=int(config.grpo["max_num_steps"]),
         seed=int(config.grpo["seed"]),
     )
@@ -226,6 +239,9 @@ def main() -> None:
         ),
         "sft_overlap": 0,
         "official_overlap": 0,
+        "extra_exclusion_manifests": [
+            str(path) for path in extra_exclusion_paths
+        ],
     }
     print(f"[objective-grpo] curriculum={json.dumps(audit)}", flush=True)
 
