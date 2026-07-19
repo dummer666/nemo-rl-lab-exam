@@ -454,7 +454,14 @@ def _base_fill_record(
         "messages": runtime_messages,
         "machine_verified": True,
         "human_reviewed": False,
-        "source_candidates": [dict(candidate) for candidate in source_candidates],
+        "source_candidates": [
+            {
+                key: value
+                for key, value in candidate.items()
+                if key != "_one_hop_record"
+            }
+            for candidate in source_candidates
+        ],
         "_audit": {
             "trusted_visible_coverage": 1.0,
             "incremental_two_hop": len(search_hops) == 2,
@@ -604,14 +611,17 @@ def _validated_pools(
     index: MarkdownBM25Index,
     raw_candidates: Sequence[Mapping[str, Any]],
     tokenizer,
+    *,
+    pool_targets: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], Counter[str]]:
+    targets = dict(pool_targets or POOL_TARGETS)
     pools: dict[str, list[dict[str, Any]]] = {
-        split: [] for split in POOL_TARGETS
+        split: [] for split in targets
     }
     reasons: Counter[str] = Counter()
     for candidate in raw_candidates:
         split = str(candidate["split"])
-        if len(pools[split]) >= POOL_TARGETS[split]:
+        if split not in pools or len(pools[split]) >= targets[split]:
             continue
         record = _build_one_hop(index, candidate, tokenizer)
         if record is None:
@@ -625,7 +635,7 @@ def _validated_pools(
         )
         if all(
             len(pools[current]) >= target
-            for current, target in POOL_TARGETS.items()
+            for current, target in targets.items()
         ):
             break
     return pools, reasons

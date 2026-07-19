@@ -70,3 +70,25 @@ def test_pair_rejects_answer_cross_leakage():
     }
 
     assert run._can_pair(first, second) is False
+
+
+def test_validated_pool_accepts_explicit_larger_targets(monkeypatch):
+    candidates = [
+        {"candidate_id": str(index), "split": "train"}
+        for index in range(4)
+    ]
+    monkeypatch.setattr(
+        run,
+        "_build_one_hop",
+        lambda _index, candidate, _tokenizer: {"id": candidate["candidate_id"]},
+    )
+
+    pools, reasons = run._validated_pools(
+        object(),
+        candidates,
+        object(),
+        pool_targets={"train": 3},
+    )
+
+    assert len(pools["train"]) == 3
+    assert not reasons
