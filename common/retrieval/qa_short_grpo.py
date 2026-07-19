@@ -39,6 +39,36 @@ def _take_excluding(
     raise ValueError("not enough distinct RL holdout questions for one training batch")
 
 
+def _take_distinct(
+    pool: _Cycle,
+    count: int,
+    row_id,
+    name: str,
+) -> list[dict]:
+    unique_ids = {row_id(row) for row in pool.rows}
+    if len(unique_ids) < count:
+        raise ValueError(
+            f"not enough distinct {name} questions for one training batch: "
+            f"need {count}, found {len(unique_ids)}"
+        )
+
+    selected = []
+    selected_ids = set()
+    for _ in range(count):
+        for _ in range(2 * len(pool.rows)):
+            row = pool.take()
+            source_row_id = row_id(row)
+            if source_row_id not in selected_ids:
+                selected.append(row)
+                selected_ids.add(source_row_id)
+                break
+        else:
+            raise ValueError(
+                f"could not draw {count} distinct {name} questions"
+            )
+    return selected
+
+
 def _clean_row_id(row: dict) -> int:
     clean = row.get("_clean") if isinstance(row.get("_clean"), dict) else {}
     if "row_id" not in clean:
@@ -172,11 +202,13 @@ def build_balanced_open_grpo_curriculum(
     prompts_per_step: int = 4,
     seed: int = 42,
 ) -> list[dict]:
-    """Mix two objective questions, one fill, and one short per step."""
+    """Mix 50% objective, 25% fill, and 25% short prompts per step."""
     if total_steps <= 0:
         raise ValueError("total_steps must be positive")
-    if prompts_per_step != 4:
-        raise ValueError("balanced open GRPO requires four prompts per step")
+    if prompts_per_step <= 0 or prompts_per_step % 4:
+        raise ValueError(
+            "balanced open GRPO prompts_per_step must be a positive multiple of four"
+        )
 
     sft_row_ids = {
         int(row["row_id"])
@@ -212,25 +244,47 @@ def build_balanced_open_grpo_curriculum(
         "fill": _Cycle(fill, rng, "fill"),
         "short": _Cycle(short, rng, "short"),
     }
+    objective_count = prompts_per_step // 2
+    open_count = prompts_per_step // 4
     curriculum = []
     for step in range(1, total_steps + 1):
-        first_objective = pools["objective"].take()
-        second_objective = pools["objective"].take()
-        for _ in range(len(pools["objective"].rows)):
-            if _clean_row_id(second_objective) != _clean_row_id(
-                first_objective
-            ):
-                break
-            second_objective = pools["objective"].take()
-        else:
-            raise ValueError(
-                "not enough distinct objective questions for one batch"
-            )
+        objective_rows = _take_distinct(
+            pools["objective"],
+            objective_count,
+            _clean_row_id,
+            "objective",
+        )
+        fill_rows = _take_distinct(
+            pools["fill"],
+            open_count,
+            _holdout_row_id,
+            "fill",
+        )
+        short_rows = _take_distinct(
+            pools["short"],
+            open_count,
+            _holdout_row_id,
+            "short",
+        )
         selections = [
-            ("objective:0", first_objective),
-            ("objective:1", second_objective),
-            ("fill", pools["fill"].take()),
-            ("short", pools["short"].take()),
+            *[
+                (f"objective:{index}", row)
+                for index, row in enumerate(objective_rows)
+            ],
+            *[
+                (
+                    "fill" if open_count == 1 else f"fill:{index}",
+                    row,
+                )
+                for index, row in enumerate(fill_rows)
+            ],
+            *[
+                (
+                    "short" if open_count == 1 else f"short:{index}",
+                    row,
+                )
+                for index, row in enumerate(short_rows)
+            ],
         ]
         for slot, row in selections:
             if slot.startswith("objective"):
