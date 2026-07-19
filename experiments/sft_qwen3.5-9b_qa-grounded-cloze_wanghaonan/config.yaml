@@ -1,0 +1,24 @@
+# One conservative epoch over grounded one-hop and incremental two-hop cloze.
+defaults:
+  - ../../configs/base/sft.yaml
+  - ../../configs/models/qwen3.5-9b.yaml
+  - ../../configs/qa_grounded_cloze_sft.yaml
+
+sft:
+  max_num_epochs: 1
+  max_num_steps: 94
+  val_period: 31
+  val_batches: 12
+  val_global_batch_size: 4
+  val_micro_batch_size: 1
+  val_at_start: true
+  val_at_end: true
+  seed: 91
+  only_unmask_final: false
+
+checkpointing:
+  metric_name: "val:val_loss"
+  higher_is_better: false
+  keep_top_k: 4
+  save_period: 31
+  save_optimizer: true

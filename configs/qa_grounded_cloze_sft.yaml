@@ -1,0 +1,71 @@
+# Shared settings for grounded cloze SFT and its smoke run.
+policy:
+  model_name: "/shared/outputs/wanghaonan/sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan/sft_qwen3.5-9b_qa-retrieval-v1_wanghaonan-wanghaonan-20260718-130828/hf_export/step_50"
+  tokenizer:
+    name: ${policy.model_name}
+    chat_template: "{% for message in messages %}{{ message['content'] }}{% endfor %}"
+    chat_template_kwargs: null
+  train_global_batch_size: 4
+  train_micro_batch_size: 1
+  max_total_sequence_length: 3072
+  dtensor_cfg:
+    enabled: false
+  optimizer: null
+  scheduler: null
+  make_sequence_length_divisible_by: ${policy.megatron_cfg.tensor_model_parallel_size}
+  sequence_packing:
+    enabled: false
+  megatron_cfg:
+    enabled: true
+    activation_checkpointing: true
+    apply_rope_fusion: false
+    defer_fp32_logits: true
+    empty_unused_memory_level: 2
+    force_reconvert_from_hf: false
+    distributed_data_parallel_config:
+      overlap_grad_reduce: false
+      overlap_param_gather: false
+    peft:
+      enabled: true
+      target_modules: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+      dim: 8
+      alpha: 16
+      dropout: 0.0
+      lora_dtype: "bfloat16"
+    optimizer:
+      lr: 3.0e-6
+      min_lr: 3.0e-7
+      weight_decay: 0.0
+    scheduler:
+      lr_decay_style: "cosine"
+      lr_warmup_iters: 4
+      lr_decay_iters: 94
+
+data:
+  add_bos: false
+  add_eos: true
+  add_generation_prompt: false
+  shuffle: true
+  num_workers: 1
+  train:
+    dataset_name: openai_format
+    data_path: /shared/outputs/wanghaonan/qa_grounded_cloze_semantic_refine_wanghaonan/qa_grounded_cloze_semantic_refine_wanghaonan-wanghaonan-20260719-085554/grounded_cloze_semantic/train.jsonl
+    chat_key: messages
+    system_key: null
+    system_prompt: null
+    tool_key: null
+    use_preserving_dataset: true
+  validation:
+    dataset_name: openai_format
+    data_path: /shared/outputs/wanghaonan/qa_grounded_cloze_semantic_refine_wanghaonan/qa_grounded_cloze_semantic_refine_wanghaonan-wanghaonan-20260719-085554/grounded_cloze_semantic/validation.jsonl
+    chat_key: messages
+    system_key: null
+    system_prompt: null
+    tool_key: null
+    use_preserving_dataset: true
+
+logger:
+  wandb_enabled: false
+  tensorboard_enabled: false
+  swanlab_enabled: false
+  monitor_gpus: true
